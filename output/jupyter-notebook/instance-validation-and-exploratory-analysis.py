@@ -15,6 +15,7 @@
 # - comportamento da camada observacional
 # - sanidade operacional por regime
 # - cobertura do espaço de instâncias e checagem de redundância
+# - smoke test orientado a solver para verificar utilidade algorítmica do benchmark
 # - drilldown visual de uma instância concreta
 #
 # **Modo de uso**
@@ -69,8 +70,10 @@ if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
 import instance_analysis_repl as repl
+import exact_solver_smoke as solver_smoke
 
 repl = importlib.reload(repl)
+solver_smoke = importlib.reload(solver_smoke)
 
 SEED = repl.SEED
 np.random.seed(SEED)
@@ -89,7 +92,8 @@ SCALE_ORDER = repl.SCALE_ORDER
 # 2. Validar integridade estrutural, reconciliar audits e inspecionar métricas agregadas do release.
 # 3. Verificar se a camada observacional reduz sobre-determinismo sem quebrar a semântica operacional.
 # 4. Confirmar que o release cobre regiões distintas do espaço de instâncias e não colapsa em casos quase redundantes.
-# 5. Fazer drilldown visual em uma instância para checagem manual do baseline FIFO.
+# 5. Executar um smoke test exato com orçamento fixo para mostrar que o benchmark é informativo do ponto de vista algorítmico.
+# 6. Fazer drilldown visual em uma instância para checagem manual do baseline FIFO.
 
 # %%
 # Bootstrap the notebook workspace from the shared REPL backend
@@ -368,6 +372,155 @@ instance_space_summary.to_csv(ARTIFACT_DIR / "instance_space_summary.csv", index
 # - o screening aqui é deliberadamente conservador: ele combina `core_instance_digest`, features padronizadas e distância ao vizinho mais próximo
 
 # %% [markdown]
+# ## Solver-oriented smoke test
+#
+# As seções anteriores mostram que o release é válido e diverso. Esta seção
+# adiciona uma evidência complementar: o dataset também é informativo para
+# benchmark algorítmico.
+#
+# O teste abaixo não é o protocolo final do TCC. Ele é um **smoke test exato
+# budgetado**, usando `scipy.optimize.milp` neste ambiente porque `gurobipy`
+# não está disponível localmente. Para manter o tempo de execução sob controle,
+# usamos subinstâncias induzidas pelos primeiros jobs em ordem de chegada,
+# com orçamento fixo de `5` segundos por caso.
+#
+# A leitura desejada é:
+#
+# - casos pequenos fecham com solver exato
+# - casos intermediários continuam viáveis, mas passam a exibir gap
+# - casos maiores seguem carregando e produzindo incumbentes, mas já apontam para trilhas `hybrid` ou `metaheuristic`
+
+# %%
+solver_smoke_df = solver_smoke.run_smoke_suite(root=REPO_ROOT)
+solver_smoke_df["case_label"] = (
+    solver_smoke_df["scale_code"].astype(str)
+    + "-"
+    + solver_smoke_df["max_jobs"].astype(int).astype(str)
+    + " jobs"
+)
+solver_smoke_df["gap_pct"] = solver_smoke_df["mip_gap"].fillna(1.0) * 100.0
+solver_smoke_df["objective_vs_dual_gap_min"] = (
+    solver_smoke_df["objective_makespan_min"] - solver_smoke_df["dual_bound_makespan_min"]
+)
+
+display(solver_smoke_df)
+
+fig, axes = plt.subplots(1, 3, figsize=(20, 6.5))
+
+sns.barplot(
+    data=solver_smoke_df,
+    x="case_label",
+    y="objective_makespan_min",
+    hue="status_label",
+    dodge=False,
+    palette={"optimal": "#2a9d8f", "time_limit": "#e9c46a", "feasible": "#8ecae6", "other": "#94a3b8", "infeasible": "#d62828"},
+    ax=axes[0],
+)
+axes[0].scatter(
+    range(len(solver_smoke_df)),
+    solver_smoke_df["dual_bound_makespan_min"],
+    color="#1d3557",
+    s=70,
+    marker="D",
+    zorder=3,
+    label="Dual bound",
+)
+for idx, row in solver_smoke_df.reset_index(drop=True).iterrows():
+    if pd.notna(row["mip_gap"]):
+        axes[0].text(idx, row["objective_makespan_min"] + 8, f"gap {row['mip_gap']:.1%}", ha="center", va="bottom", fontsize=9, color="#334155")
+axes[0].set_title("Incumbente e dual bound por caso\nFechar o gap fica mais difícil à medida que o tamanho cresce", fontsize=13)
+axes[0].set_xlabel("")
+axes[0].set_ylabel("Makespan (min)")
+axes[0].tick_params(axis="x", rotation=15)
+handles, labels = axes[0].get_legend_handles_labels()
+axes[0].legend(handles, labels, loc="upper left", frameon=True)
+
+sns.barplot(
+    data=solver_smoke_df,
+    x="case_label",
+    y="gap_pct",
+    hue="recommended_solver_track",
+    dodge=False,
+    palette="deep",
+    ax=axes[1],
+)
+axes[1].set_title("Gap relativo sob orçamento fixo de 5 s\nA escada de dificuldade já aparece no smoke test", fontsize=13)
+axes[1].set_xlabel("")
+axes[1].set_ylabel("MIP gap (%)")
+axes[1].tick_params(axis="x", rotation=15)
+for patch in axes[1].patches:
+    height = patch.get_height()
+    if np.isfinite(height) and height > 0:
+        axes[1].text(patch.get_x() + patch.get_width() / 2, height + 1.0, f"{height:.1f}%", ha="center", va="bottom", fontsize=9, color="#334155")
+
+size_plot = solver_smoke_df.melt(
+    id_vars=["case_label"],
+    value_vars=["eligible_var_count", "machine_pair_binary_count", "constraint_count"],
+    var_name="size_metric",
+    value_name="count",
+)
+size_labels = {
+    "eligible_var_count": "x vars",
+    "machine_pair_binary_count": "sequencing binaries",
+    "constraint_count": "constraints",
+}
+size_plot["size_metric"] = size_plot["size_metric"].map(size_labels)
+sns.barplot(
+    data=size_plot,
+    x="case_label",
+    y="count",
+    hue="size_metric",
+    ax=axes[2],
+    palette="Set2",
+)
+axes[2].set_title("Crescimento do modelo exato\nO custo combinatório sobe rapidamente com o tamanho", fontsize=13)
+axes[2].set_xlabel("")
+axes[2].set_ylabel("Contagem")
+axes[2].tick_params(axis="x", rotation=15)
+
+fig.suptitle("Smoke test orientado a solver", x=0.02, y=1.03, ha="left", fontsize=18, fontweight="bold")
+fig.text(
+    0.02,
+    0.95,
+    "Leitura rápida: o pipeline exato carrega, fecha nos menores e passa a exibir gaps não triviais quando a escala do caso cresce.",
+    fontsize=11,
+)
+fig.tight_layout(rect=(0, 0, 1, 0.92))
+fig.savefig(ARTIFACT_DIR / "solver_oriented_smoke_test.png", dpi=160, bbox_inches="tight")
+plt.show()
+
+solver_smoke_df.to_csv(ARTIFACT_DIR / "solver_smoke_results.csv", index=False)
+
+solver_smoke_summary = pd.DataFrame(
+    [
+        {
+            "solver_backend": "scipy.optimize.milp (HiGHS)",
+            "time_limit_sec": float(solver_smoke_df["time_limit_sec"].iloc[0]),
+            "small_cases_optimal": bool(
+                solver_smoke_df.loc[solver_smoke_df["max_jobs"].isin([8, 12]), "status_label"].eq("optimal").all()
+            ),
+            "all_cases_have_solution": bool(solver_smoke_df["has_solution"].all()),
+            "large_cases_nontrivial_gap": bool(
+                solver_smoke_df.loc[solver_smoke_df["max_jobs"].isin([18, 24]), "mip_gap"].fillna(0.0).ge(0.10).all()
+            ),
+            "gap_non_decreasing_with_case_size": bool(
+                solver_smoke_df.sort_values("max_jobs")["mip_gap"].fillna(0.0).is_monotonic_increasing
+            ),
+        }
+    ]
+)
+display(solver_smoke_summary)
+solver_smoke_summary.to_csv(ARTIFACT_DIR / "solver_smoke_summary.csv", index=False)
+
+# %% [markdown]
+# **Como ler a figura acima**
+#
+# - painel esquerdo: as barras são os incumbentes e os diamantes são os dual bounds; distância grande entre eles significa dificuldade residual
+# - painel central: sob o mesmo orçamento de tempo, `XS-8` e `S-12` fecham, enquanto `M-18` e `L-24` já preservam gaps não triviais
+# - painel direito: o crescimento de binárias disjuntivas e restrições explica por que a trilha recomendada migra de `exact` para `hybrid/metaheuristic`
+# - esta seção é um **smoke test de utilidade algorítmica**, não o protocolo final de competição entre solvers
+
+# %% [markdown]
 # ## Instance drilldown
 #
 # Um drilldown ajuda a validar visualmente se o baseline FIFO de uma instância concreta:
@@ -414,6 +567,7 @@ plt.show()
 # - os checks de regime são positivos para `mean_flow`, `p95_flow` e fila média
 # - o proxy médio de congestionamento é útil, mas não monotônico em todas as famílias
 # - o espaço de instâncias não contém duplicatas exatas nem candidatos `duplicate-like` sob o screening adotado
+# - o smoke test exato fecha nos casos menores e exibe gaps não triviais quando o tamanho da subinstância cresce
 # - a camada observacional reduz determinismo excessivo sem destruir semântica
 # - a base é forte o suficiente para servir como dataset pai de análises e futuras derivações com G2MILP
 
@@ -458,6 +612,18 @@ summary = {
     "instance_space_nearest_neighbor_distance_min": float(
         instance_space_summary.loc[0, "nearest_neighbor_distance_min"]
     ),
+    "solver_smoke_small_cases_optimal": bool(
+        solver_smoke_summary.loc[0, "small_cases_optimal"]
+    ),
+    "solver_smoke_all_cases_have_solution": bool(
+        solver_smoke_summary.loc[0, "all_cases_have_solution"]
+    ),
+    "solver_smoke_large_cases_nontrivial_gap": bool(
+        solver_smoke_summary.loc[0, "large_cases_nontrivial_gap"]
+    ),
+    "solver_smoke_gap_ladder_pass": bool(
+        solver_smoke_summary.loc[0, "gap_non_decreasing_with_case_size"]
+    ),
     "g2milp_role": manifest["official_dataset_role"],
 }
 summary_df = pd.DataFrame([summary])
@@ -481,6 +647,10 @@ summary_lines = [
     f"- Instance-space exact duplicate checks pass: `{summary['instance_space_exact_duplicate_checks_pass']}`",
     f"- Instance-space duplicate-like checks pass: `{summary['instance_space_duplicate_like_checks_pass']}`",
     f"- Instance-space nearest-neighbor distance min: `{summary['instance_space_nearest_neighbor_distance_min']:.4f}`",
+    f"- Solver smoke small cases optimal: `{summary['solver_smoke_small_cases_optimal']}`",
+    f"- Solver smoke all cases have solution: `{summary['solver_smoke_all_cases_have_solution']}`",
+    f"- Solver smoke large cases show non-trivial gap: `{summary['solver_smoke_large_cases_nontrivial_gap']}`",
+    f"- Solver smoke gap ladder pass: `{summary['solver_smoke_gap_ladder_pass']}`",
     f"- Official role: `{summary['g2milp_role']}`",
 ]
 summary_text = "\n".join(summary_lines)

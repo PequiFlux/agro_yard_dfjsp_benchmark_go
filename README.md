@@ -145,6 +145,10 @@ Resumo dos resultados agregados:
 - `instance_space_exact_duplicate_checks_pass = True`
 - `instance_space_duplicate_like_checks_pass = True`
 - menor distância ao vizinho mais próximo no espaço padronizado de features: `2.3228`
+- `solver_smoke_small_cases_optimal = True`
+- `solver_smoke_all_cases_have_solution = True`
+- `solver_smoke_large_cases_nontrivial_gap = True`
+- `solver_smoke_gap_ladder_pass = True`
 - soma total de mismatches em eventos: `0` para `JOB_VISIBLE`, `JOB_ARRIVAL`, `MACHINE_DOWN` e `MACHINE_UP`
 - margem observada sobre o lower bound físico no resumo por escala/regime: de `124` a `353` minutos
 
@@ -158,6 +162,8 @@ Leitura correta desses checks:
 - `congestion_mean_regime_order_checks_pass = False` indica que a média do proxy `arrival_congestion_score` não é monotônica em todas as famílias; isso não invalida o benchmark, porque esse proxy é auxiliar e não a métrica-alvo do problema
 - `instance_space_exact_duplicate_checks_pass = True` significa que o notebook não encontrou duplicatas exatas nem por digest dos arquivos centrais da instância nem por vetor de features padronizado
 - `instance_space_duplicate_like_checks_pass = True` significa que nenhuma instância caiu abaixo do limiar heurístico de screening no espaço multivariado usado para PCA e vizinho mais próximo
+- `solver_smoke_small_cases_optimal = True` significa que, em um smoke test exato budgetado com `scipy.optimize.milp`, os menores casos induzidos por chegada (`XS-8` e `S-12`) fecharam no orçamento de `5 s`
+- `solver_smoke_large_cases_nontrivial_gap = True` significa que os casos maiores do mesmo smoke test (`M-18` e `L-24`) continuam produzindo incumbentes, mas já preservam gap não trivial sob o mesmo orçamento
 
 Artefatos tabulares principais:
 
@@ -168,6 +174,8 @@ Artefatos tabulares principais:
 - `output/jupyter-notebook/instance_validation_analysis_artifacts/instance_space_features.csv`
 - `output/jupyter-notebook/instance_validation_analysis_artifacts/instance_space_pairs.csv`
 - `output/jupyter-notebook/instance_validation_analysis_artifacts/instance_space_summary.csv`
+- `output/jupyter-notebook/instance_validation_analysis_artifacts/solver_smoke_results.csv`
+- `output/jupyter-notebook/instance_validation_analysis_artifacts/solver_smoke_summary.csv`
 - `output/jupyter-notebook/instance_validation_analysis_artifacts/audit_reconciliation.csv`
 - `output/jupyter-notebook/instance_validation_analysis_artifacts/event_report.csv`
 - `output/jupyter-notebook/instance_validation_analysis_artifacts/due_margin_summary.csv`
@@ -181,6 +189,8 @@ Imagens principais:
 ![Operational performance and regime sanity](output/jupyter-notebook/instance_validation_analysis_artifacts/operational_performance_and_regime_sanity.png)
 
 ![Instance-space coverage](output/jupyter-notebook/instance_validation_analysis_artifacts/instance_space_coverage.png)
+
+![Solver-oriented smoke test](output/jupyter-notebook/instance_validation_analysis_artifacts/solver_oriented_smoke_test.png)
 
 ![FIFO schedule drilldown for GO_XS_DISRUPTED_01](output/jupyter-notebook/instance_validation_analysis_artifacts/go_xs_disrupted_01_fifo_schedule.png)
 
