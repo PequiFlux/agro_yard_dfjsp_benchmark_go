@@ -179,6 +179,80 @@ O relatório está em:
 
 - `catalog/validation_report_observed.csv`
 
+### 1.1. Matriz completa de validação por instância
+
+O verificador `tools/validate_observed_release.py` não faz uma checagem genérica; ele cruza explicitamente os arquivos centrais consumidos por cada instância e marca `FAIL` se qualquer invariante abaixo for quebrado.
+
+Arquivos inspecionados por instância:
+
+- `jobs.csv`
+- `operations.csv`
+- `precedences.csv`
+- `eligible_machines.csv`
+- `events.csv`
+- `fifo_schedule.csv`
+- `fifo_job_metrics.csv`
+
+Invariantes validados em cada instância:
+
+1. Cardinalidade do fluxo por job.
+   Cada `job_id` deve ter exatamente `4` operações em `operations.csv`. Se falhar, o issue emitido é `not_all_jobs_have_4_operations`.
+2. Cardinalidade das precedências.
+   Cada `job_id` deve ter exatamente `3` arcos de precedência em `precedences.csv`. Se falhar, o issue emitido é `not_all_jobs_have_3_precedences`.
+3. Cobertura de elegibilidade por operação.
+   Todo par `(job_id, op_seq)` presente em `operations.csv` precisa aparecer em `eligible_machines.csv`. Se falhar, o issue emitido é `ops_without_eligible_machine`.
+4. Limite físico mínimo para prazo.
+   Para cada job, o validador recalcula `nominal_lb` como a soma dos menores `proc_time_min` por operação e exige:
+
+   ```text
+   completion_due_min - arrival_time_min >= nominal_lb + 18
+   ```
+
+   Se falhar, o issue emitido é `due_below_nominal_lb_plus_buffer`.
+5. Integridade dos eventos de visibilidade.
+   Cada job deve ter exatamente `1` evento `JOB_VISIBLE` em `events.csv`. Se falhar, o issue emitido é `job_visible_event_count_mismatch`.
+6. Integridade dos eventos de chegada.
+   Cada job deve ter exatamente `1` evento `JOB_ARRIVAL` em `events.csv`. Se falhar, o issue emitido é `job_arrival_event_count_mismatch`.
+7. Não sobreposição por máquina no baseline FIFO.
+   Em `fifo_schedule.csv`, as operações alocadas na mesma `machine_id` não podem se sobrepor no tempo. Se falhar, o issue emitido é `machine_overlap_<machine_id>`.
+8. Consistência entre schedule e tempo elegível.
+   Para cada linha de `fifo_schedule.csv`, o validador exige:
+
+   ```text
+   end_min - start_min == eligible_machines.proc_time_min
+   ```
+
+   para a mesma tripla `(job_id, op_seq, machine_id)`. Se falhar, o issue emitido é `sched_proc_mismatch`.
+9. Consistência entre métricas e schedule.
+   Para cada job, `fifo_job_metrics.csv::completion_min` deve coincidir com o maior `end_min` do job em `fifo_schedule.csv`. Se falhar, o issue emitido é `metric_completion_mismatch`.
+10. Consistência entre métricas e chegada.
+    Para cada job, `fifo_job_metrics.csv::flow_time_min` deve ser igual a `completion_min - arrival_time_min`. Se falhar, o issue emitido é `metric_flow_mismatch`.
+
+Critério de aprovação por instância:
+
+- `issue_count == 0`
+- `status == PASS`
+
+Se qualquer um dos checks acima falhar, a instância é considerada inválida para uso como seed dataset oficial.
+
+### 1.2. Validação do lado do loader Gurobi
+
+Além do verificador principal, rodamos o carregador consumido pelo ecossistema Gurobi para garantir que as instâncias continuam usáveis pelo stack operacional do benchmark:
+
+```bash
+python tools/validate_benchmark.py
+python gurobi/load_instance.py instances/GO_XS_BALANCED_01
+```
+
+O script `tools/validate_benchmark.py` adiciona checks complementares por instância:
+
+1. A instância precisa ser carregável via `gurobi/load_instance.py`.
+2. Toda `machine_id` citada em `eligible_machines.csv` precisa existir em `machines.csv`.
+3. Todo `proc_time_min` em `eligible_machines.csv` precisa ser estritamente positivo.
+4. Todo par `(job_id, op_seq)` precisa ter ao menos uma máquina elegível.
+
+Esses checks são importantes porque uma instância pode parecer estruturalmente coerente em CSV, mas ainda assim quebrar o pipeline do solver se houver referência inválida de máquina ou tempos não positivos.
+
 ### 2. Reconciliação nominal vs observado
 
 O release só é aceitável se os valores observados coincidirem exatamente com os arquivos centrais:
@@ -222,16 +296,36 @@ Depois da promoção desta release para a raiz do projeto, revalidamos diretamen
 
 ```bash
 python tools/validate_observed_release.py .
+python tools/validate_benchmark.py
 python gurobi/load_instance.py instances/GO_XS_BALANCED_01
 ```
 
 Esses comandos executaram com sucesso na raiz promovida, o que confirma que a release oficial permaneceu carregável e estruturalmente válida após substituir a versão antiga.
+
+### 5.1. Validação analítica complementar no notebook
+
+Além dos validadores estruturais, mantivemos uma camada de validação exploratória em:
+
+- `output/jupyter-notebook/instance-validation-and-exploratory-analysis.ipynb`
+
+Esse notebook usa o backend de análise compartilhado em `tools/instance_analysis_repl.py` e complementa a validação das instâncias com:
+
+1. reconciliação agregada dos audits por instância
+2. distribuição da margem de prazo sobre o lower bound físico
+3. comportamento do congestionamento por regime
+4. multiplicador observado/nominal por estágio
+5. verificação da ordem `balanced < peak < disrupted`
+6. utilização média por família de máquina
+7. drilldown visual de cronograma FIFO sem overlap para uma instância concreta
+
+Essa camada não substitui a validação estrutural binária, mas ajuda a detectar instâncias que passariam no schema e ainda assim estariam estranhas do ponto de vista operacional.
 
 ## Quando considerar esta release inválida
 
 Esta release deve ser tratada como inválida se qualquer um dos pontos abaixo ocorrer:
 
 - alguma instância falhar na validação estrutural
+- alguma instância falhar na validação do loader Gurobi
 - os audits não reconciliarem exatamente com `jobs.csv` e `eligible_machines.csv`
 - a ordem `balanced < peak < disrupted` colapsar nas métricas de fluxo
 - os diagnósticos não mostrarem redução de sobre-determinismo
