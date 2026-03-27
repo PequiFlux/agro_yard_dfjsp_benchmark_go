@@ -30,6 +30,7 @@ import sys
 from pathlib import Path
 
 import matplotlib
+
 NON_INTERACTIVE_CLI = __name__ == "__main__" and "ipykernel" not in sys.modules
 if NON_INTERACTIVE_CLI:
     matplotlib.use("Agg")
@@ -45,13 +46,21 @@ if NON_INTERACTIVE_CLI:
 
 def find_repo_root(start: Path) -> Path:
     for candidate in (start, *start.parents):
-        if (candidate / "instances").exists() and (candidate / "catalog").exists() and (candidate / "tools").exists():
+        if (
+            (candidate / "instances").exists()
+            and (candidate / "catalog").exists()
+            and (candidate / "tools").exists()
+        ):
             return candidate
-    raise RuntimeError("Could not locate repository root from current working directory.")
+    raise RuntimeError(
+        "Could not locate repository root from current working directory."
+    )
 
 
 REPO_ROOT = find_repo_root(Path.cwd().resolve())
-ARTIFACT_DIR = REPO_ROOT / "output" / "jupyter-notebook" / "instance_validation_analysis_artifacts"
+ARTIFACT_DIR = (
+    REPO_ROOT / "output" / "jupyter-notebook" / "instance_validation_analysis_artifacts"
+)
 ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
 
 TOOLS_DIR = REPO_ROOT / "tools"
@@ -114,9 +123,15 @@ utilization = repl.UTILIZATION.copy()
 diagnostics = repl.DIAGNOSTICS.copy()
 unload = repl.UNLOAD.copy()
 
-validation_observed = pd.read_csv(REPO_ROOT / "catalog" / "validation_report_observed.csv")
+validation_observed = pd.read_csv(
+    REPO_ROOT / "catalog" / "validation_report_observed.csv"
+)
 validation_nominal_style = pd.read_csv(REPO_ROOT / "catalog" / "validation_report.csv")
-g2milp_contract = json.loads((REPO_ROOT / "catalog" / "g2milp_generation_contract.json").read_text(encoding="utf-8"))
+g2milp_contract = json.loads(
+    (REPO_ROOT / "catalog" / "g2milp_generation_contract.json").read_text(
+        encoding="utf-8"
+    )
+)
 
 inventory_summary = pd.DataFrame([SUMMARY])
 display(inventory_summary)
@@ -146,8 +161,12 @@ noise_manifest_summary = pd.DataFrame(
             "official_dataset_role": manifest["official_dataset_role"],
             "noise_model_id": observed_noise_manifest.get("model_id"),
             "noise_global_seed": observed_noise_manifest.get("global_seed"),
-            "parent_dataset_version": observed_noise_manifest.get("parent_dataset_version"),
-            "generator_model": observed_noise_manifest.get("generator_model", "ChatGPT 5.4 PRO"),
+            "parent_dataset_version": observed_noise_manifest.get(
+                "parent_dataset_version"
+            ),
+            "generator_model": observed_noise_manifest.get(
+                "generator_model", "ChatGPT 5.4 PRO"
+            ),
         }
     ]
 )
@@ -171,7 +190,9 @@ display(family_summary.sort_values(["scale_code", "regime_code"]))
 
 fig, axes = plt.subplots(1, 2, figsize=(16, 6))
 
-jobs_heatmap = family_summary.pivot(index="scale_code", columns="regime_code", values="avg_n_jobs").reindex(index=SCALE_ORDER, columns=REGIME_ORDER)
+jobs_heatmap = family_summary.pivot(
+    index="scale_code", columns="regime_code", values="avg_n_jobs"
+).reindex(index=SCALE_ORDER, columns=REGIME_ORDER)
 sns.heatmap(jobs_heatmap, annot=True, fmt=".1f", cmap="YlGnBu", ax=axes[0])
 axes[0].set_title("Jobs médios por escala e regime")
 axes[0].set_xlabel("Regime")
@@ -183,7 +204,16 @@ machine_family = (
     .rename(columns={"machine_id": "machine_rows"})
     .sort_values("machine_rows", ascending=False)
 )
-sns.barplot(data=machine_family, x="machine_family", y="machine_rows", hue="machine_family", dodge=False, legend=False, ax=axes[1], palette="crest")
+sns.barplot(
+    data=machine_family,
+    x="machine_family",
+    y="machine_rows",
+    hue="machine_family",
+    dodge=False,
+    legend=False,
+    ax=axes[1],
+    palette="crest",
+)
 axes[1].set_title("Linhas de máquinas por família no release")
 axes[1].set_xlabel("Família")
 axes[1].set_ylabel("Contagem de linhas")
@@ -210,7 +240,9 @@ display(event_report.sort_values(["scale_code", "regime_code", "instance_id"]))
 display(audit_reconciliation.sort_values(["scale_code", "regime_code", "instance_id"]))
 
 due_margin_summary = (
-    jobs_enriched.groupby(["scale_code", "regime_code"], as_index=False)["due_margin_over_lb_min"]
+    jobs_enriched.groupby(["scale_code", "regime_code"], as_index=False)[
+        "due_margin_over_lb_min"
+    ]
     .agg(["mean", "min", "median", "max"])
     .round(2)
     .reset_index()
@@ -226,7 +258,9 @@ issue_heatmap = structural_report.pivot_table(
     aggfunc="sum",
     fill_value=0,
 ).reindex(index=SCALE_ORDER, columns=REGIME_ORDER)
-sns.heatmap(issue_heatmap, annot=True, fmt=".0f", cmap="Greens_r", ax=axes[0], cbar=False)
+sns.heatmap(
+    issue_heatmap, annot=True, fmt=".0f", cmap="Greens_r", ax=axes[0], cbar=False
+)
 axes[0].set_title("Issue count por escala/regime")
 
 audit_long = audit_reconciliation.melt(
@@ -235,19 +269,42 @@ audit_long = audit_reconciliation.melt(
     var_name="check",
     value_name="match_share",
 )
-sns.boxplot(data=audit_long, x="check", y="match_share", hue="check", dodge=False, legend=False, ax=axes[1], palette="Set2")
+sns.boxplot(
+    data=audit_long,
+    x="check",
+    y="match_share",
+    hue="check",
+    dodge=False,
+    legend=False,
+    ax=axes[1],
+    palette="Set2",
+)
 axes[1].set_title("Reconciliação com audits")
 axes[1].set_xlabel("")
 axes[1].set_ylabel("Share de linhas reconciliadas")
 axes[1].set_ylim(0.95, 1.01)
 
-sns.boxplot(data=jobs_enriched, x="regime_code", y="due_margin_over_lb_min", order=REGIME_ORDER, hue="regime_code", dodge=False, legend=False, ax=axes[2], palette="flare")
+sns.boxplot(
+    data=jobs_enriched,
+    x="regime_code",
+    y="due_margin_over_lb_min",
+    order=REGIME_ORDER,
+    hue="regime_code",
+    dodge=False,
+    legend=False,
+    ax=axes[2],
+    palette="flare",
+)
 axes[2].set_title("Margem do prazo sobre lower bound")
 axes[2].set_xlabel("Regime")
 axes[2].set_ylabel("Margem (min)")
 
 fig.tight_layout()
-fig.savefig(ARTIFACT_DIR / "structural_validation_and_auditability.png", dpi=160, bbox_inches="tight")
+fig.savefig(
+    ARTIFACT_DIR / "structural_validation_and_auditability.png",
+    dpi=160,
+    bbox_inches="tight",
+)
 plt.show()
 
 structural_report.to_csv(ARTIFACT_DIR / "structural_report.csv", index=False)
@@ -270,12 +327,31 @@ display(diagnostics_df)
 
 fig, axes = plt.subplots(2, 2, figsize=(18, 12))
 
-sns.boxplot(data=jobs_enriched, x="priority_class", y="due_slack_min", order=["URGENT", "CONTRACTED", "REGULAR"], hue="priority_class", dodge=False, legend=False, ax=axes[0, 0], palette="viridis")
+sns.boxplot(
+    data=jobs_enriched,
+    x="priority_class",
+    y="due_slack_min",
+    order=["URGENT", "CONTRACTED", "REGULAR"],
+    hue="priority_class",
+    dodge=False,
+    legend=False,
+    ax=axes[0, 0],
+    palette="viridis",
+)
 axes[0, 0].set_title("Folga observada por classe de prioridade")
 axes[0, 0].set_xlabel("Priority class")
 axes[0, 0].set_ylabel("Due slack (min)")
 
-sns.boxplot(data=jobs_enriched, x="appointment_flag", y="reveal_lead_min", hue="appointment_flag", dodge=False, legend=False, ax=axes[0, 1], palette="coolwarm")
+sns.boxplot(
+    data=jobs_enriched,
+    x="appointment_flag",
+    y="reveal_lead_min",
+    hue="appointment_flag",
+    dodge=False,
+    legend=False,
+    ax=axes[0, 1],
+    palette="coolwarm",
+)
 axes[0, 1].set_title("Lead de revelação por appointment")
 axes[0, 1].set_xlabel("Appointment flag")
 axes[0, 1].set_ylabel("Arrival - reveal (min)")
@@ -293,14 +369,26 @@ axes[1, 0].set_title("UNLOAD: carga vs proc_time observado")
 axes[1, 0].set_xlabel("Load tons")
 axes[1, 0].set_ylabel("Proc time (min)")
 
-sns.boxplot(data=proc_audit_enriched, x="stage_name", y="proc_multiplier", order=STAGE_ORDER, hue="stage_name", dodge=False, legend=False, ax=axes[1, 1], palette="Set3")
+sns.boxplot(
+    data=proc_audit_enriched,
+    x="stage_name",
+    y="proc_multiplier",
+    order=STAGE_ORDER,
+    hue="stage_name",
+    dodge=False,
+    legend=False,
+    ax=axes[1, 1],
+    palette="Set3",
+)
 axes[1, 1].set_title("Multiplicador observado/nominal por estágio")
 axes[1, 1].set_xlabel("Stage")
 axes[1, 1].set_ylabel("Observed / nominal")
 axes[1, 1].tick_params(axis="x", rotation=15)
 
 fig.tight_layout()
-fig.savefig(ARTIFACT_DIR / "observational_layer_behavior.png", dpi=160, bbox_inches="tight")
+fig.savefig(
+    ARTIFACT_DIR / "observational_layer_behavior.png", dpi=160, bbox_inches="tight"
+)
 plt.show()
 
 # %%
@@ -309,7 +397,9 @@ congestion_vs_proc = proc_audit_enriched.copy()
 fig, axes = plt.subplots(1, 2, figsize=(16, 6))
 
 sns.scatterplot(
-    data=congestion_vs_proc.sample(min(len(congestion_vs_proc), 3000), random_state=SEED),
+    data=congestion_vs_proc.sample(
+        min(len(congestion_vs_proc), 3000), random_state=SEED
+    ),
     x="arrival_congestion_score",
     y="proc_multiplier",
     hue="stage_name",
@@ -320,7 +410,17 @@ axes[0].set_title("Congestionamento vs multiplicador de proc_time")
 axes[0].set_xlabel("Arrival congestion score")
 axes[0].set_ylabel("Observed / nominal")
 
-sns.boxplot(data=jobs_enriched, x="regime_code", y="arrival_congestion_score", order=REGIME_ORDER, hue="regime_code", dodge=False, legend=False, ax=axes[1], palette="mako")
+sns.boxplot(
+    data=jobs_enriched,
+    x="regime_code",
+    y="arrival_congestion_score",
+    order=REGIME_ORDER,
+    hue="regime_code",
+    dodge=False,
+    legend=False,
+    ax=axes[1],
+    palette="mako",
+)
 axes[1].set_title("Congestionamento por regime")
 axes[1].set_xlabel("Regime")
 axes[1].set_ylabel("Arrival congestion score")
@@ -344,31 +444,56 @@ display(family_summary.sort_values(["scale_code", "regime_code"]))
 
 fig, axes = plt.subplots(2, 2, figsize=(18, 12))
 
-mean_heatmap = family_summary.pivot(index="scale_code", columns="regime_code", values="avg_fifo_mean_flow_min").reindex(index=SCALE_ORDER, columns=REGIME_ORDER)
+mean_heatmap = family_summary.pivot(
+    index="scale_code", columns="regime_code", values="avg_fifo_mean_flow_min"
+).reindex(index=SCALE_ORDER, columns=REGIME_ORDER)
 sns.heatmap(mean_heatmap, annot=True, fmt=".1f", cmap="YlOrBr", ax=axes[0, 0])
 axes[0, 0].set_title("FIFO mean flow por escala/regime")
 
-p95_heatmap = family_summary.pivot(index="scale_code", columns="regime_code", values="avg_fifo_p95_flow_min").reindex(index=SCALE_ORDER, columns=REGIME_ORDER)
+p95_heatmap = family_summary.pivot(
+    index="scale_code", columns="regime_code", values="avg_fifo_p95_flow_min"
+).reindex(index=SCALE_ORDER, columns=REGIME_ORDER)
 sns.heatmap(p95_heatmap, annot=True, fmt=".1f", cmap="YlGnBu", ax=axes[0, 1])
 axes[0, 1].set_title("FIFO p95 flow por escala/regime")
 
-sns.boxplot(data=job_metrics, x="regime_code", y="flow_time_min", order=REGIME_ORDER, hue="regime_code", dodge=False, legend=False, ax=axes[1, 0], palette="Spectral")
+sns.boxplot(
+    data=job_metrics,
+    x="regime_code",
+    y="flow_time_min",
+    order=REGIME_ORDER,
+    hue="regime_code",
+    dodge=False,
+    legend=False,
+    ax=axes[1, 0],
+    palette="Spectral",
+)
 axes[1, 0].set_title("Distribuição de flow time por regime")
 axes[1, 0].set_xlabel("Regime")
 axes[1, 0].set_ylabel("Flow time (min)")
 
-util_plot = (
-    utilization.groupby(["machine_family", "regime_code"], as_index=False)["utilization_share"]
-    .mean()
+util_plot = utilization.groupby(["machine_family", "regime_code"], as_index=False)[
+    "utilization_share"
+].mean()
+sns.barplot(
+    data=util_plot,
+    x="machine_family",
+    y="utilization_share",
+    hue="regime_code",
+    hue_order=REGIME_ORDER,
+    ax=axes[1, 1],
+    palette="deep",
 )
-sns.barplot(data=util_plot, x="machine_family", y="utilization_share", hue="regime_code", hue_order=REGIME_ORDER, ax=axes[1, 1], palette="deep")
 axes[1, 1].set_title("Utilização média por família de máquina")
 axes[1, 1].set_xlabel("Machine family")
 axes[1, 1].set_ylabel("Utilization share")
 axes[1, 1].tick_params(axis="x", rotation=20)
 
 fig.tight_layout()
-fig.savefig(ARTIFACT_DIR / "operational_performance_and_regime_sanity.png", dpi=160, bbox_inches="tight")
+fig.savefig(
+    ARTIFACT_DIR / "operational_performance_and_regime_sanity.png",
+    dpi=160,
+    bbox_inches="tight",
+)
 plt.show()
 
 # %% [markdown]
@@ -395,23 +520,47 @@ display(sample_jobs.head())
 display(sample_metrics.describe().round(2))
 
 fig = repl.schedule_plot(sample_instance, schedule, downtimes)
-fig.savefig(ARTIFACT_DIR / f"{sample_instance.lower()}_fifo_schedule.png", dpi=160, bbox_inches="tight")
+fig.savefig(
+    ARTIFACT_DIR / f"{sample_instance.lower()}_fifo_schedule.png",
+    dpi=160,
+    bbox_inches="tight",
+)
 plt.show()
 
 fig, axes = plt.subplots(1, 2, figsize=(16, 5))
-sns.scatterplot(data=sample_jobs, x="arrival_time_min", y="completion_due_min", hue="priority_class", ax=axes[0], s=80)
+sns.scatterplot(
+    data=sample_jobs,
+    x="arrival_time_min",
+    y="completion_due_min",
+    hue="priority_class",
+    ax=axes[0],
+    s=80,
+)
 axes[0].set_title(f"{sample_instance}: chegada vs prazo")
 axes[0].set_xlabel("Arrival time (min)")
 axes[0].set_ylabel("Completion due (min)")
 
-sns.barplot(data=sample_metrics.sort_values("flow_time_min", ascending=False).head(12), x="job_id", y="flow_time_min", hue="job_id", dodge=False, legend=False, ax=axes[1], palette="rocket")
+sns.barplot(
+    data=sample_metrics.sort_values("flow_time_min", ascending=False).head(12),
+    x="job_id",
+    y="flow_time_min",
+    hue="job_id",
+    dodge=False,
+    legend=False,
+    ax=axes[1],
+    palette="rocket",
+)
 axes[1].set_title(f"{sample_instance}: top flow times")
 axes[1].set_xlabel("Job")
 axes[1].set_ylabel("Flow time (min)")
 axes[1].tick_params(axis="x", rotation=75)
 
 fig.tight_layout()
-fig.savefig(ARTIFACT_DIR / f"{sample_instance.lower()}_job_level_views.png", dpi=160, bbox_inches="tight")
+fig.savefig(
+    ARTIFACT_DIR / f"{sample_instance.lower()}_job_level_views.png",
+    dpi=160,
+    bbox_inches="tight",
+)
 plt.show()
 
 # %% [markdown]
@@ -433,8 +582,13 @@ summary = {
     "due_audit_match_share": float(audit_reconciliation["due_match_share"].mean()),
     "proc_audit_match_share": float(audit_reconciliation["proc_match_share"].mean()),
     "r2_due_slack_vs_priority": float(diagnostics["r2_due_slack_vs_priority"]),
-    "r2_unload_proc_vs_load_machine_moisture": float(diagnostics["r2_unload_proc_vs_load_machine_moisture"]),
-    "all_regime_order_checks_pass": bool(regime_checks["mean_flow_order_ok"].all() and regime_checks["p95_flow_order_ok"].all()),
+    "r2_unload_proc_vs_load_machine_moisture": float(
+        diagnostics["r2_unload_proc_vs_load_machine_moisture"]
+    ),
+    "all_regime_order_checks_pass": bool(
+        regime_checks["mean_flow_order_ok"].all()
+        and regime_checks["p95_flow_order_ok"].all()
+    ),
     "g2milp_role": manifest["official_dataset_role"],
 }
 summary_df = pd.DataFrame([summary])
