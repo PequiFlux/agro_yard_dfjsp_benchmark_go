@@ -149,6 +149,43 @@ Além disso, a ordem operacional esperada foi preservada:
 - `balanced < peak < disrupted` em `avg_fifo_mean_flow_min`
 - `balanced < peak < disrupted` em `avg_fifo_p95_flow_min`
 
+## Resultados do notebook
+
+O notebook `output/jupyter-notebook/instance-validation-and-exploratory-analysis.ipynb` gerou uma camada adicional de testes, estatísticas e figuras sobre as `36` instâncias oficiais.
+
+Resumo dos resultados agregados:
+
+- `structural_pass_rate = 1.0000`
+- `due_audit_match_share = 1.0000`
+- `proc_audit_match_share = 1.0000`
+- `all_regime_order_checks_pass = True`
+- soma total de mismatches em eventos: `0` para `JOB_VISIBLE`, `JOB_ARRIVAL`, `MACHINE_DOWN` e `MACHINE_UP`
+- margem observada sobre o lower bound físico no resumo por escala/regime: de `124` a `353` minutos
+
+Artefatos tabulares principais:
+
+- `output/jupyter-notebook/instance_validation_analysis_artifacts/notebook_summary.csv`
+- `output/jupyter-notebook/instance_validation_analysis_artifacts/structural_report.csv`
+- `output/jupyter-notebook/instance_validation_analysis_artifacts/audit_reconciliation.csv`
+- `output/jupyter-notebook/instance_validation_analysis_artifacts/event_report.csv`
+- `output/jupyter-notebook/instance_validation_analysis_artifacts/due_margin_summary.csv`
+
+Imagens principais:
+
+![Structural validation and auditability](output/jupyter-notebook/instance_validation_analysis_artifacts/structural_validation_and_auditability.png)
+
+![Observational layer behavior](output/jupyter-notebook/instance_validation_analysis_artifacts/observational_layer_behavior.png)
+
+![Operational performance and regime sanity](output/jupyter-notebook/instance_validation_analysis_artifacts/operational_performance_and_regime_sanity.png)
+
+![FIFO schedule drilldown for GO_XS_DISRUPTED_01](output/jupyter-notebook/instance_validation_analysis_artifacts/go_xs_disrupted_01_fifo_schedule.png)
+
+Figuras complementares:
+
+- `output/jupyter-notebook/instance_validation_analysis_artifacts/inventory_overview.png`
+- `output/jupyter-notebook/instance_validation_analysis_artifacts/congestion_diagnostics.png`
+- `output/jupyter-notebook/instance_validation_analysis_artifacts/go_xs_disrupted_01_job_level_views.png`
+
 ## Arquivos principais
 
 - `manifest.json`
@@ -157,6 +194,8 @@ Além disso, a ordem operacional esperada foi preservada:
 - `catalog/noise_diagnostics_before_after.json`
 - `catalog/validation_report_observed.csv`
 - `docs/g2milp_generation_contract.md`
+- `output/jupyter-notebook/instance-validation-and-exploratory-analysis.ipynb`
+- `output/jupyter-notebook/instance_validation_analysis_artifacts/`
 
 ## Leitura correta desta base
 

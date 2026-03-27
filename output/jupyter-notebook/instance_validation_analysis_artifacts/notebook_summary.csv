@@ -1,0 +1,2 @@
+dataset_version,instance_count,structural_pass_rate,due_audit_match_share,proc_audit_match_share,r2_due_slack_vs_priority,r2_unload_proc_vs_load_machine_moisture,all_regime_order_checks_pass,g2milp_role
+1.1.0-observed,36,1.0,1.0,1.0,0.4848,0.4995,True,base_dataset_for_g2milp_instance_generation
