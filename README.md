@@ -381,6 +381,12 @@ Abrir a análise exploratória completa em modo REPL:
 python -i tools/instance_analysis_repl.py
 ```
 
+Abrir o REPL companheiro do notebook `instance-validation-and-exploratory-analysis.ipynb`:
+
+```bash
+python -i tools/instance_validation_notebook_repl.py
+```
+
 No REPL, os objetos e helpers principais já ficam carregados:
 
 - `SUMMARY`
@@ -392,6 +398,15 @@ No REPL, os objetos e helpers principais já ficam carregados:
 - `plot_operational_sanity()`
 - `plot_instance_drilldown('GO_XS_DISRUPTED_01')`
 - `export_all_artifacts()`
+
+No REPL específico do notebook, além do contexto base, ficam disponíveis:
+
+- `NOTEBOOK_PATH`
+- `notebook_sections()`
+- `plot_congestion_diagnostics()`
+- `plot_fifo_schedule('GO_XS_DISRUPTED_01')`
+- `plot_job_level_views('GO_XS_DISRUPTED_01')`
+- `export_notebook_artifacts()`
 
 Os artefatos exportados pelo REPL são gravados em:
 
