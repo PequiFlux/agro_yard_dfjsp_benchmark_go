@@ -48,6 +48,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+from matplotlib.patches import Patch
 
 TOOLS_DIR = Path(__file__).resolve().parent
 if str(TOOLS_DIR) not in sys.path:
@@ -207,42 +208,98 @@ def machine_utilization_frame(schedule: pd.DataFrame, machines: pd.DataFrame, pa
     return frame
 
 
+def _machine_sort_key(machine_id: str) -> tuple[int, int, str]:
+    if machine_id.startswith("WB"):
+        family_rank = 0
+    elif machine_id.startswith("LAB"):
+        family_rank = 1
+    elif machine_id.startswith("HOP"):
+        family_rank = 2
+    else:
+        family_rank = 99
+    suffix = "".join(ch for ch in machine_id if ch.isdigit())
+    return (family_rank, int(suffix) if suffix else 0, machine_id)
+
+
 def schedule_plot(instance_id: str, schedule: pd.DataFrame, downtimes: pd.DataFrame):
     plot_df = schedule[schedule["instance_id"] == instance_id].copy().sort_values(["machine_id", "start_min", "end_min"])
     downs = downtimes[downtimes["instance_id"] == instance_id].copy()
-    machine_order = sorted(plot_df["machine_id"].unique())
+    machine_order = sorted(plot_df["machine_id"].unique(), key=_machine_sort_key)
     ypos = {machine: idx for idx, machine in enumerate(machine_order)}
-    fig, ax = plt.subplots(figsize=(14, max(4, 0.6 * len(machine_order) + 1)))
-    palette = dict(zip(STAGE_ORDER, sns.color_palette("Set2", n_colors=len(STAGE_ORDER))))
-    for row in plot_df.itertuples(index=False):
-        ax.barh(
-            ypos[row.machine_id],
-            row.end_min - row.start_min,
-            left=row.start_min,
-            height=0.6,
-            color=palette.get(row.stage_name, "#4c78a8"),
-            edgecolor="black",
-            alpha=0.9,
-        )
-        ax.text(row.start_min + 0.5, ypos[row.machine_id], f"{row.job_id}:{row.op_seq}", va="center", ha="left", fontsize=8)
+    fig, ax = plt.subplots(figsize=(15, max(4.8, 0.9 * len(machine_order) + 1.2)))
+    palette = {
+        "WEIGH_IN": "#62c2a8",
+        "SAMPLE_CLASSIFY": "#ff9b6a",
+        "UNLOAD": "#8ea2cf",
+        "WEIGH_OUT": "#e186c8",
+    }
+    label_min_width = 32
+
+    for idx, machine_id in enumerate(machine_order):
+        lane_color = "#f7f9fc" if idx % 2 == 0 else "#eef3f8"
+        ax.axhspan(idx - 0.42, idx + 0.42, color=lane_color, zorder=0)
+
     for row in downs.itertuples(index=False):
         ax.barh(
             ypos[row.machine_id],
             row.end_min - row.start_min,
             left=row.start_min,
-            height=0.8,
-            color="#d62728",
-            alpha=0.25,
-            edgecolor="none",
+            height=0.76,
+            color="#d95f5f",
+            alpha=0.16,
+            edgecolor="#d95f5f",
+            hatch="///",
+            linewidth=0.0,
+            zorder=1,
         )
+
+    for row in plot_df.itertuples(index=False):
+        width = row.end_min - row.start_min
+        ax.barh(
+            ypos[row.machine_id],
+            width,
+            left=row.start_min,
+            height=0.58,
+            color=palette.get(row.stage_name, "#4c78a8"),
+            edgecolor="white",
+            linewidth=1.1,
+            alpha=0.96,
+            zorder=2,
+        )
+        if width >= label_min_width:
+            ax.text(
+                row.start_min + width / 2,
+                ypos[row.machine_id],
+                row.job_id,
+                va="center",
+                ha="center",
+                fontsize=7,
+                color="#1f2937",
+                zorder=3,
+                bbox={"boxstyle": "round,pad=0.12", "facecolor": "white", "edgecolor": "none", "alpha": 0.7},
+            )
     ax.set_yticks(list(ypos.values()))
     ax.set_yticklabels(list(ypos.keys()))
+    ax.invert_yaxis()
     ax.set_xlabel("Time (min)")
     ax.set_ylabel("Machine")
-    ax.set_title(f"FIFO schedule by machine: {instance_id}")
-    legend_handles = [plt.Rectangle((0, 0), 1, 1, color=palette[s]) for s in STAGE_ORDER]
-    ax.legend(legend_handles, STAGE_ORDER, title="Stage", bbox_to_anchor=(1.02, 1), loc="upper left")
-    fig.tight_layout()
+    ax.set_title(f"FIFO schedule by machine: {instance_id}", fontsize=16, weight="semibold", loc="left", pad=12)
+    ax.grid(axis="x", color="#cbd5e1", linewidth=0.8, alpha=0.7)
+    ax.grid(axis="y", visible=False)
+    for spine in ("top", "right", "left"):
+        ax.spines[spine].set_visible(False)
+    ax.spines["bottom"].set_color("#94a3b8")
+    legend_handles = [Patch(facecolor=palette[s], edgecolor="white", label=s) for s in STAGE_ORDER]
+    legend_handles.append(Patch(facecolor="#d95f5f", edgecolor="#d95f5f", hatch="///", alpha=0.16, label="DOWNTIME"))
+    ax.legend(
+        legend_handles,
+        [h.get_label() for h in legend_handles],
+        title="Stage",
+        bbox_to_anchor=(1.02, 0.98),
+        loc="upper left",
+        frameon=True,
+    )
+    fig.tight_layout(rect=(0, 0, 0.82, 1))
     return fig
 
 
