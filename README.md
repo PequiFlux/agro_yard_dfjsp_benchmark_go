@@ -381,10 +381,10 @@ Abrir a análise exploratória completa em modo REPL:
 python -i tools/instance_analysis_repl.py
 ```
 
-Abrir o REPL companheiro do notebook `instance-validation-and-exploratory-analysis.ipynb`:
+Rodar a mesma análise do notebook em script com separadores `# %%`:
 
 ```bash
-python -i tools/instance_validation_notebook_repl.py
+python output/jupyter-notebook/instance-validation-and-exploratory-analysis.py
 ```
 
 No REPL, os objetos e helpers principais já ficam carregados:
@@ -399,14 +399,15 @@ No REPL, os objetos e helpers principais já ficam carregados:
 - `plot_instance_drilldown('GO_XS_DISRUPTED_01')`
 - `export_all_artifacts()`
 
-No REPL específico do notebook, além do contexto base, ficam disponíveis:
+O notebook também está espelhado em:
 
-- `NOTEBOOK_PATH`
-- `notebook_sections()`
-- `plot_congestion_diagnostics()`
-- `plot_fifo_schedule('GO_XS_DISRUPTED_01')`
-- `plot_job_level_views('GO_XS_DISRUPTED_01')`
-- `export_notebook_artifacts()`
+- `output/jupyter-notebook/instance-validation-and-exploratory-analysis.py`
+
+Esse arquivo usa separadores `# %%`, então pode ser executado:
+
+- como script Python sequencial
+- em VS Code, Cursor ou editores compatíveis com células percent-style
+- como alternativa versionável ao `.ipynb`, sem perder a divisão lógica por células
 
 Os artefatos exportados pelo REPL são gravados em:
 
