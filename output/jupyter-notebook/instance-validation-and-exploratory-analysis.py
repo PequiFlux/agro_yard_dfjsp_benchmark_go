@@ -93,6 +93,8 @@ SCALE_ORDER = repl.SCALE_ORDER
 # Bootstrap the notebook workspace from the shared REPL backend
 CTX = repl.CTX
 SUMMARY = repl.SUMMARY
+NOTEBOOK_CTX = dict(repl.CTX)
+NOTEBOOK_CTX["artifact_dir"] = ARTIFACT_DIR
 
 params = repl.PARAMS.copy()
 catalog = repl.CATALOG.copy()
@@ -146,6 +148,7 @@ display(
 - `repl.plot_inventory_overview()`
 - `repl.plot_validation_overview()`
 - `repl.plot_observational_layer()`
+- `repl.plot_congestion_diagnostics()`
 - `repl.plot_operational_sanity()`
 - `repl.plot_instance_drilldown("GO_XS_DISRUPTED_01")`
 """
@@ -188,40 +191,15 @@ display(pd.DataFrame([g2milp_contract]).iloc[:, :8])
 display(catalog.sort_values(["scale_code", "regime_code", "replicate"]).head(12))
 display(family_summary.sort_values(["scale_code", "regime_code"]))
 
-fig, axes = plt.subplots(1, 2, figsize=(16, 6))
-
-jobs_heatmap = family_summary.pivot(
-    index="scale_code", columns="regime_code", values="avg_n_jobs"
-).reindex(index=SCALE_ORDER, columns=REGIME_ORDER)
-sns.heatmap(jobs_heatmap, annot=True, fmt=".1f", cmap="YlGnBu", ax=axes[0])
-axes[0].set_title("Jobs médios por escala e regime")
-axes[0].set_xlabel("Regime")
-axes[0].set_ylabel("Escala")
-
-machine_family = (
-    machines.groupby(["machine_family"], as_index=False)["machine_id"]
-    .count()
-    .rename(columns={"machine_id": "machine_rows"})
-    .sort_values("machine_rows", ascending=False)
-)
-sns.barplot(
-    data=machine_family,
-    x="machine_family",
-    y="machine_rows",
-    hue="machine_family",
-    dodge=False,
-    legend=False,
-    ax=axes[1],
-    palette="crest",
-)
-axes[1].set_title("Linhas de máquinas por família no release")
-axes[1].set_xlabel("Família")
-axes[1].set_ylabel("Contagem de linhas")
-axes[1].tick_params(axis="x", rotation=20)
-
-fig.tight_layout()
-fig.savefig(ARTIFACT_DIR / "inventory_overview.png", dpi=160, bbox_inches="tight")
+fig = repl.plot_inventory_overview(ctx=NOTEBOOK_CTX, save=True)
 plt.show()
+
+# %% [markdown]
+# **Como ler a figura acima**
+#
+# - o heatmap da esquerda mostra cobertura do release por família `escala x regime`
+# - as barras da direita mostram quantas linhas de recurso existem por família de máquina no release consolidado
+# - a figura serve como checagem de inventário, não de desempenho
 
 # %% [markdown]
 # ## Structural validation and auditability
@@ -249,68 +227,20 @@ due_margin_summary = (
 )
 display(due_margin_summary)
 
-fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-
-issue_heatmap = structural_report.pivot_table(
-    index="scale_code",
-    columns="regime_code",
-    values="issue_count",
-    aggfunc="sum",
-    fill_value=0,
-).reindex(index=SCALE_ORDER, columns=REGIME_ORDER)
-sns.heatmap(
-    issue_heatmap, annot=True, fmt=".0f", cmap="Greens_r", ax=axes[0], cbar=False
-)
-axes[0].set_title("Issue count por escala/regime")
-
-audit_long = audit_reconciliation.melt(
-    id_vars=["instance_id", "scale_code", "regime_code"],
-    value_vars=["due_match_share", "proc_match_share"],
-    var_name="check",
-    value_name="match_share",
-)
-sns.boxplot(
-    data=audit_long,
-    x="check",
-    y="match_share",
-    hue="check",
-    dodge=False,
-    legend=False,
-    ax=axes[1],
-    palette="Set2",
-)
-axes[1].set_title("Reconciliação com audits")
-axes[1].set_xlabel("")
-axes[1].set_ylabel("Share de linhas reconciliadas")
-axes[1].set_ylim(0.95, 1.01)
-
-sns.boxplot(
-    data=jobs_enriched,
-    x="regime_code",
-    y="due_margin_over_lb_min",
-    order=REGIME_ORDER,
-    hue="regime_code",
-    dodge=False,
-    legend=False,
-    ax=axes[2],
-    palette="flare",
-)
-axes[2].set_title("Margem do prazo sobre lower bound")
-axes[2].set_xlabel("Regime")
-axes[2].set_ylabel("Margem (min)")
-
-fig.tight_layout()
-fig.savefig(
-    ARTIFACT_DIR / "structural_validation_and_auditability.png",
-    dpi=160,
-    bbox_inches="tight",
-)
+fig = repl.plot_validation_overview(ctx=NOTEBOOK_CTX, save=True)
 plt.show()
 
 structural_report.to_csv(ARTIFACT_DIR / "structural_report.csv", index=False)
 event_report.to_csv(ARTIFACT_DIR / "event_report.csv", index=False)
 audit_reconciliation.to_csv(ARTIFACT_DIR / "audit_reconciliation.csv", index=False)
 due_margin_summary.to_csv(ARTIFACT_DIR / "due_margin_summary.csv", index=False)
+
+# %% [markdown]
+# **Como ler a figura acima**
+#
+# - painel esquerdo: cada célula deve ficar em `PASS`; se aparecer número de issues, aquela família tem falhas estruturais
+# - painel central: os dois bars precisam ficar em `100%`; qualquer queda indica quebra entre CSV central e CSV de audit
+# - painel direito: mostra quanta folga de prazo sobra acima do lower bound físico plausível
 
 # %% [markdown]
 # ## Observational layer behavior
@@ -325,109 +255,26 @@ due_margin_summary.to_csv(ARTIFACT_DIR / "due_margin_summary.csv", index=False)
 diagnostics_df = pd.DataFrame([diagnostics])
 display(diagnostics_df)
 
-fig, axes = plt.subplots(2, 2, figsize=(18, 12))
-
-sns.boxplot(
-    data=jobs_enriched,
-    x="priority_class",
-    y="due_slack_min",
-    order=["URGENT", "CONTRACTED", "REGULAR"],
-    hue="priority_class",
-    dodge=False,
-    legend=False,
-    ax=axes[0, 0],
-    palette="viridis",
-)
-axes[0, 0].set_title("Folga observada por classe de prioridade")
-axes[0, 0].set_xlabel("Priority class")
-axes[0, 0].set_ylabel("Due slack (min)")
-
-sns.boxplot(
-    data=jobs_enriched,
-    x="appointment_flag",
-    y="reveal_lead_min",
-    hue="appointment_flag",
-    dodge=False,
-    legend=False,
-    ax=axes[0, 1],
-    palette="coolwarm",
-)
-axes[0, 1].set_title("Lead de revelação por appointment")
-axes[0, 1].set_xlabel("Appointment flag")
-axes[0, 1].set_ylabel("Arrival - reveal (min)")
-
-sns.scatterplot(
-    data=unload.sample(min(len(unload), 2500), random_state=SEED),
-    x="load_tons",
-    y="proc_time_min",
-    hue="moisture_class",
-    style="regime_code",
-    alpha=0.45,
-    ax=axes[1, 0],
-)
-axes[1, 0].set_title("UNLOAD: carga vs proc_time observado")
-axes[1, 0].set_xlabel("Load tons")
-axes[1, 0].set_ylabel("Proc time (min)")
-
-sns.boxplot(
-    data=proc_audit_enriched,
-    x="stage_name",
-    y="proc_multiplier",
-    order=STAGE_ORDER,
-    hue="stage_name",
-    dodge=False,
-    legend=False,
-    ax=axes[1, 1],
-    palette="Set3",
-)
-axes[1, 1].set_title("Multiplicador observado/nominal por estágio")
-axes[1, 1].set_xlabel("Stage")
-axes[1, 1].set_ylabel("Observed / nominal")
-axes[1, 1].tick_params(axis="x", rotation=15)
-
-fig.tight_layout()
-fig.savefig(
-    ARTIFACT_DIR / "observational_layer_behavior.png", dpi=160, bbox_inches="tight"
-)
+fig = repl.plot_observational_layer(ctx=NOTEBOOK_CTX, save=True)
 plt.show()
+
+# %% [markdown]
+# **Como ler a figura acima**
+#
+# - prioridade ainda ordena a folga de prazo, mas o `R²` abaixo de `0.5` mostra que ela não explica tudo sozinha
+# - `appointment` afeta visibilidade antes da chegada, o que ajuda a aproximar o benchmark de uma operação real
+# - em `UNLOAD`, a carga e o regime empurram o tempo mediano para cima
+# - os multiplicadores por estágio mostram onde a camada observacional realmente introduziu variação
 
 # %%
-congestion_vs_proc = proc_audit_enriched.copy()
-
-fig, axes = plt.subplots(1, 2, figsize=(16, 6))
-
-sns.scatterplot(
-    data=congestion_vs_proc.sample(
-        min(len(congestion_vs_proc), 3000), random_state=SEED
-    ),
-    x="arrival_congestion_score",
-    y="proc_multiplier",
-    hue="stage_name",
-    alpha=0.35,
-    ax=axes[0],
-)
-axes[0].set_title("Congestionamento vs multiplicador de proc_time")
-axes[0].set_xlabel("Arrival congestion score")
-axes[0].set_ylabel("Observed / nominal")
-
-sns.boxplot(
-    data=jobs_enriched,
-    x="regime_code",
-    y="arrival_congestion_score",
-    order=REGIME_ORDER,
-    hue="regime_code",
-    dodge=False,
-    legend=False,
-    ax=axes[1],
-    palette="mako",
-)
-axes[1].set_title("Congestionamento por regime")
-axes[1].set_xlabel("Regime")
-axes[1].set_ylabel("Arrival congestion score")
-
-fig.tight_layout()
-fig.savefig(ARTIFACT_DIR / "congestion_diagnostics.png", dpi=160, bbox_inches="tight")
+fig = repl.plot_congestion_diagnostics(ctx=NOTEBOOK_CTX, save=True)
 plt.show()
+
+# %% [markdown]
+# **Como ler a figura acima**
+#
+# - no painel esquerdo, cada linha resume um estágio por decil de congestionamento; inclinação positiva significa que o proxy está influenciando `proc_time`
+# - no painel direito, `balanced`, `peak` e `disrupted` deveriam deslocar a distribuição para cima nessa ordem
 
 # %% [markdown]
 # ## Operational performance and regime sanity
@@ -442,59 +289,15 @@ plt.show()
 display(regime_checks)
 display(family_summary.sort_values(["scale_code", "regime_code"]))
 
-fig, axes = plt.subplots(2, 2, figsize=(18, 12))
-
-mean_heatmap = family_summary.pivot(
-    index="scale_code", columns="regime_code", values="avg_fifo_mean_flow_min"
-).reindex(index=SCALE_ORDER, columns=REGIME_ORDER)
-sns.heatmap(mean_heatmap, annot=True, fmt=".1f", cmap="YlOrBr", ax=axes[0, 0])
-axes[0, 0].set_title("FIFO mean flow por escala/regime")
-
-p95_heatmap = family_summary.pivot(
-    index="scale_code", columns="regime_code", values="avg_fifo_p95_flow_min"
-).reindex(index=SCALE_ORDER, columns=REGIME_ORDER)
-sns.heatmap(p95_heatmap, annot=True, fmt=".1f", cmap="YlGnBu", ax=axes[0, 1])
-axes[0, 1].set_title("FIFO p95 flow por escala/regime")
-
-sns.boxplot(
-    data=job_metrics,
-    x="regime_code",
-    y="flow_time_min",
-    order=REGIME_ORDER,
-    hue="regime_code",
-    dodge=False,
-    legend=False,
-    ax=axes[1, 0],
-    palette="Spectral",
-)
-axes[1, 0].set_title("Distribuição de flow time por regime")
-axes[1, 0].set_xlabel("Regime")
-axes[1, 0].set_ylabel("Flow time (min)")
-
-util_plot = utilization.groupby(["machine_family", "regime_code"], as_index=False)[
-    "utilization_share"
-].mean()
-sns.barplot(
-    data=util_plot,
-    x="machine_family",
-    y="utilization_share",
-    hue="regime_code",
-    hue_order=REGIME_ORDER,
-    ax=axes[1, 1],
-    palette="deep",
-)
-axes[1, 1].set_title("Utilização média por família de máquina")
-axes[1, 1].set_xlabel("Machine family")
-axes[1, 1].set_ylabel("Utilization share")
-axes[1, 1].tick_params(axis="x", rotation=20)
-
-fig.tight_layout()
-fig.savefig(
-    ARTIFACT_DIR / "operational_performance_and_regime_sanity.png",
-    dpi=160,
-    bbox_inches="tight",
-)
+fig = repl.plot_operational_sanity(ctx=NOTEBOOK_CTX, save=True)
 plt.show()
+
+# %% [markdown]
+# **Como ler a figura acima**
+#
+# - os heatmaps do topo validam a monotonicidade esperada: `balanced < peak < disrupted`
+# - o boxplot inferior esquerdo mostra a distribuição de `flow_time` no nível de job
+# - o gráfico inferior direito ajuda a ver quais famílias de máquina absorvem mais pressão em cada regime
 
 # %% [markdown]
 # ## Instance drilldown
@@ -519,49 +322,18 @@ display(sample_summary)
 display(sample_jobs.head())
 display(sample_metrics.describe().round(2))
 
-fig = repl.schedule_plot(sample_instance, schedule, downtimes)
-fig.savefig(
-    ARTIFACT_DIR / f"{sample_instance.lower()}_fifo_schedule.png",
-    dpi=160,
-    bbox_inches="tight",
-)
+fig = repl.plot_instance_drilldown(sample_instance, ctx=NOTEBOOK_CTX, save=True)
 plt.show()
 
-fig, axes = plt.subplots(1, 2, figsize=(16, 5))
-sns.scatterplot(
-    data=sample_jobs,
-    x="arrival_time_min",
-    y="completion_due_min",
-    hue="priority_class",
-    ax=axes[0],
-    s=80,
-)
-axes[0].set_title(f"{sample_instance}: chegada vs prazo")
-axes[0].set_xlabel("Arrival time (min)")
-axes[0].set_ylabel("Completion due (min)")
-
-sns.barplot(
-    data=sample_metrics.sort_values("flow_time_min", ascending=False).head(12),
-    x="job_id",
-    y="flow_time_min",
-    hue="job_id",
-    dodge=False,
-    legend=False,
-    ax=axes[1],
-    palette="rocket",
-)
-axes[1].set_title(f"{sample_instance}: top flow times")
-axes[1].set_xlabel("Job")
-axes[1].set_ylabel("Flow time (min)")
-axes[1].tick_params(axis="x", rotation=75)
-
-fig.tight_layout()
-fig.savefig(
-    ARTIFACT_DIR / f"{sample_instance.lower()}_job_level_views.png",
-    dpi=160,
-    bbox_inches="tight",
-)
+fig = repl.plot_job_level_views(sample_instance, ctx=NOTEBOOK_CTX, save=True)
 plt.show()
+
+# %% [markdown]
+# **Como ler as figuras acima**
+#
+# - o Gantt mostra ocupação por máquina, faixas de downtime e ausência de overlap no baseline FIFO
+# - o scatter de jobs ajuda a ver como os prazos se distribuem em função da chegada
+# - o ranking horizontal destaca os jobs mais críticos em `flow_time`
 
 # %% [markdown]
 # ## Results and notes

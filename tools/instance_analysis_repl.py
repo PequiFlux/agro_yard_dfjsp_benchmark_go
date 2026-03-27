@@ -49,6 +49,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from matplotlib.patches import Patch
+from matplotlib.ticker import PercentFormatter
 
 TOOLS_DIR = Path(__file__).resolve().parent
 if str(TOOLS_DIR) not in sys.path:
@@ -65,6 +66,7 @@ sns.set_theme(style="whitegrid", context="talk")
 STAGE_ORDER = ["WEIGH_IN", "SAMPLE_CLASSIFY", "UNLOAD", "WEIGH_OUT"]
 REGIME_ORDER = ["balanced", "peak", "disrupted"]
 SCALE_ORDER = ["XS", "S", "M", "L"]
+PRIORITY_ORDER = ["URGENT", "CONTRACTED", "REGULAR"]
 
 
 def find_repo_root(start: Path) -> Path:
@@ -466,20 +468,70 @@ def validation_tables(ctx: dict[str, Any] | None = None) -> dict[str, pd.DataFra
     }
 
 
+def _annotate_category_medians(
+    ax,
+    data: pd.DataFrame,
+    category_col: str,
+    value_col: str,
+    order: list[str],
+    fmt: str = "{:.0f}",
+    pad_share: float = 0.02,
+) -> None:
+    medians = data.groupby(category_col)[value_col].median()
+    ymin, ymax = ax.get_ylim()
+    pad = (ymax - ymin) * pad_share
+    for idx, category in enumerate(order):
+        if category in medians.index:
+            ax.text(
+                idx,
+                medians[category] + pad,
+                fmt.format(medians[category]),
+                ha="center",
+                va="bottom",
+                fontsize=9,
+                fontweight="semibold",
+                color="#334155",
+            )
+
+
+def _label_bars(ax, fmt: str = "{:.1f}", suffix: str = "", pad_share: float = 0.015) -> None:
+    ymin, ymax = ax.get_ylim()
+    pad = (ymax - ymin) * pad_share
+    for patch in ax.patches:
+        value = patch.get_height()
+        if abs(value) < 1e-9:
+            continue
+        ax.text(
+            patch.get_x() + patch.get_width() / 2,
+            value + pad,
+            f"{fmt.format(value)}{suffix}",
+            ha="center",
+            va="bottom",
+            fontsize=9,
+            color="#334155",
+        )
+
+
 def plot_inventory_overview(ctx: dict[str, Any] | None = None, save: bool = False):
     ctx = ctx or CTX
     fig, axes = plt.subplots(1, 2, figsize=(16, 6))
     jobs_heatmap = ctx["family_summary"].pivot(index="scale_code", columns="regime_code", values="avg_n_jobs").reindex(index=SCALE_ORDER, columns=REGIME_ORDER)
-    sns.heatmap(jobs_heatmap, annot=True, fmt=".1f", cmap="YlGnBu", ax=axes[0])
-    axes[0].set_title("Jobs average by scale and regime")
+    sns.heatmap(jobs_heatmap, annot=True, fmt=".0f", cmap="YlGnBu", ax=axes[0], cbar_kws={"label": "Jobs médios"})
+    axes[0].set_title("Cobertura do release\nCada célula resume as 3 réplicas da família", fontsize=13)
     axes[0].set_xlabel("Regime")
-    axes[0].set_ylabel("Scale")
+    axes[0].set_ylabel("Escala")
 
     machine_family = inventory_tables(ctx)["machine_family"]
     sns.barplot(data=machine_family, x="machine_family", y="machine_rows", hue="machine_family", dodge=False, legend=False, ax=axes[1], palette="crest")
-    axes[1].set_title("Machine rows by family")
+    axes[1].set_title("Volume de linhas por família de máquina", fontsize=13)
+    axes[1].set_xlabel("Família")
+    axes[1].set_ylabel("Linhas no release")
     axes[1].tick_params(axis="x", rotation=20)
-    fig.tight_layout()
+    _label_bars(axes[1], fmt="{:.0f}")
+
+    fig.suptitle("Inventário do dataset oficial", x=0.02, y=1.02, ha="left", fontsize=18, fontweight="bold")
+    fig.text(0.02, 0.95, "Leitura rápida: o release cobre 4 escalas, 3 regimes e mantém a estrutura de recursos esperada.", fontsize=11)
+    fig.tight_layout(rect=(0, 0, 1, 0.92))
     if save:
         _ensure_artifact_dir(ctx)
         fig.savefig(ctx["artifact_dir"] / "inventory_overview.png", dpi=160, bbox_inches="tight")
@@ -488,7 +540,7 @@ def plot_inventory_overview(ctx: dict[str, Any] | None = None, save: bool = Fals
 
 def plot_validation_overview(ctx: dict[str, Any] | None = None, save: bool = False):
     ctx = ctx or CTX
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+    fig, axes = plt.subplots(1, 3, figsize=(19, 5.6))
     issue_heatmap = ctx["structural_report"].pivot_table(
         index="scale_code",
         columns="regime_code",
@@ -496,25 +548,54 @@ def plot_validation_overview(ctx: dict[str, Any] | None = None, save: bool = Fal
         aggfunc="sum",
         fill_value=0,
     ).reindex(index=SCALE_ORDER, columns=REGIME_ORDER)
-    sns.heatmap(issue_heatmap, annot=True, fmt=".0f", cmap="Greens_r", ax=axes[0], cbar=False)
-    axes[0].set_title("Issue count by scale/regime")
-
-    audit_long = ctx["audit_reconciliation"].melt(
-        id_vars=["instance_id", "scale_code", "regime_code"],
-        value_vars=["due_match_share", "proc_match_share"],
-        var_name="check",
-        value_name="match_share",
+    issue_annotations = issue_heatmap.map(lambda value: "PASS\n0 issues" if value == 0 else f"{int(value)}\nissues")
+    sns.heatmap(
+        issue_heatmap,
+        annot=issue_annotations,
+        fmt="",
+        cmap=sns.light_palette("#15803d", as_cmap=True),
+        ax=axes[0],
+        cbar=False,
+        linewidths=1.5,
+        linecolor="white",
     )
-    sns.boxplot(data=audit_long, x="check", y="match_share", hue="check", dodge=False, legend=False, ax=axes[1], palette="Set2")
-    axes[1].set_title("Audit reconciliation")
-    axes[1].set_ylim(0.95, 1.01)
+    axes[0].set_title("Integridade estrutural\nCada célula deve ficar em PASS", fontsize=13)
+    axes[0].set_xlabel("Regime")
+    axes[0].set_ylabel("Escala")
 
-    sns.boxplot(data=ctx["jobs_enriched"], x="regime_code", y="due_margin_over_lb_min", order=REGIME_ORDER, hue="regime_code", dodge=False, legend=False, ax=axes[2], palette="flare")
-    axes[2].set_title("Due margin over lower bound")
+    audit_summary = pd.DataFrame(
+        {
+            "check": ["Prazo vs audit", "Proc_time vs audit"],
+            "match_share": [
+                float(ctx["audit_reconciliation"]["due_match_share"].mean()),
+                float(ctx["audit_reconciliation"]["proc_match_share"].mean()),
+            ],
+        }
+    )
+    sns.barplot(data=audit_summary, x="check", y="match_share", hue="check", dodge=False, legend=False, ax=axes[1], palette=["#2a9d8f", "#457b9d"])
+    axes[1].axhline(1.0, color="#0f172a", linewidth=1.0, linestyle="--", alpha=0.7)
+    axes[1].set_ylim(0.995, 1.001)
+    axes[1].yaxis.set_major_formatter(PercentFormatter(1.0, decimals=1))
+    axes[1].set_title("Reconciliação auditável\nMeta: 100% das linhas", fontsize=13)
+    axes[1].set_xlabel("")
+    axes[1].set_ylabel("Linhas reconciliadas")
+    _label_bars(axes[1], fmt="{:.1%}", pad_share=0.001)
+
+    margin_order = REGIME_ORDER
+    sns.boxplot(data=ctx["jobs_enriched"], x="regime_code", y="due_margin_over_lb_min", order=margin_order, hue="regime_code", dodge=False, legend=False, ax=axes[2], palette="flare")
+    _annotate_category_medians(axes[2], ctx["jobs_enriched"], "regime_code", "due_margin_over_lb_min", margin_order)
+    axes[2].set_title("Prazo acima do lower bound físico\nMediana anotada em cada regime", fontsize=13)
     axes[2].set_xlabel("Regime")
-    axes[2].set_ylabel("Margin (min)")
+    axes[2].set_ylabel("Margem sobre LB (min)")
 
-    fig.tight_layout()
+    fig.suptitle("Validação estrutural e auditabilidade", x=0.02, y=1.03, ha="left", fontsize=18, fontweight="bold")
+    fig.text(
+        0.02,
+        0.96,
+        "Leitura rápida: as 36 instâncias passam sem issues e os dois audits reconciliam 100% das linhas centrais.",
+        fontsize=11,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.92))
     if save:
         _ensure_artifact_dir(ctx)
         fig.savefig(ctx["artifact_dir"] / "structural_validation_and_auditability.png", dpi=160, bbox_inches="tight")
@@ -525,31 +606,158 @@ def plot_observational_layer(ctx: dict[str, Any] | None = None, save: bool = Fal
     ctx = ctx or CTX
     fig, axes = plt.subplots(2, 2, figsize=(18, 12))
 
-    sns.boxplot(data=ctx["jobs_enriched"], x="priority_class", y="due_slack_min", order=["URGENT", "CONTRACTED", "REGULAR"], hue="priority_class", dodge=False, legend=False, ax=axes[0, 0], palette="viridis")
-    axes[0, 0].set_title("Observed due slack by priority")
+    sns.boxplot(
+        data=ctx["jobs_enriched"],
+        x="priority_class",
+        y="due_slack_min",
+        order=PRIORITY_ORDER,
+        hue="priority_class",
+        dodge=False,
+        legend=False,
+        ax=axes[0, 0],
+        palette="viridis",
+    )
+    _annotate_category_medians(axes[0, 0], ctx["jobs_enriched"], "priority_class", "due_slack_min", PRIORITY_ORDER)
+    axes[0, 0].set_title(
+        f"Folga observada ainda segue prioridade\nR²(priority -> slack) = {ctx['diagnostics']['r2_due_slack_vs_priority']:.3f}",
+        fontsize=13,
+    )
+    axes[0, 0].set_xlabel("Classe de prioridade")
+    axes[0, 0].set_ylabel("Folga observada (min)")
 
-    sns.boxplot(data=ctx["jobs_enriched"], x="appointment_flag", y="reveal_lead_min", hue="appointment_flag", dodge=False, legend=False, ax=axes[0, 1], palette="coolwarm")
-    axes[0, 1].set_title("Reveal lead by appointment")
+    appointment_df = ctx["jobs_enriched"].assign(
+        appointment_label=lambda frame: np.where(frame["appointment_flag"].eq(1), "Com appointment", "Sem appointment")
+    )
+    appointment_order = ["Sem appointment", "Com appointment"]
+    sns.boxplot(
+        data=appointment_df,
+        x="appointment_label",
+        y="reveal_lead_min",
+        order=appointment_order,
+        hue="appointment_label",
+        dodge=False,
+        legend=False,
+        ax=axes[0, 1],
+        palette="coolwarm",
+    )
+    _annotate_category_medians(axes[0, 1], appointment_df, "appointment_label", "reveal_lead_min", appointment_order)
+    axes[0, 1].set_title("Appointments antecipam a visibilidade dos jobs\nSem appointment a mediana fica essencialmente em 0 min", fontsize=13)
+    axes[0, 1].set_xlabel("")
+    axes[0, 1].set_ylabel("Chegada - revelação (min)")
 
-    sns.scatterplot(
-        data=ctx["unload"].sample(min(len(ctx["unload"]), 2500), random_state=SEED),
+    unload_trend = (
+        ctx["unload"].groupby(["regime_code", "load_tons"], as_index=False)["proc_time_min"].median()
+    )
+    sns.lineplot(
+        data=unload_trend,
         x="load_tons",
         y="proc_time_min",
-        hue="moisture_class",
-        style="regime_code",
-        alpha=0.45,
+        hue="regime_code",
+        hue_order=REGIME_ORDER,
+        marker="o",
+        linewidth=2.2,
         ax=axes[1, 0],
+        palette="deep",
     )
-    axes[1, 0].set_title("UNLOAD observed proc time")
+    axes[1, 0].set_title(
+        f"UNLOAD cresce com carga e severidade do regime\nR²(load + machine + moisture -> proc) = {ctx['diagnostics']['r2_unload_proc_vs_load_machine_moisture']:.3f}",
+        fontsize=13,
+    )
+    axes[1, 0].set_xlabel("Carga do job (t)")
+    axes[1, 0].set_ylabel("Proc_time mediano em UNLOAD (min)")
 
-    sns.boxplot(data=ctx["proc_audit_enriched"], x="stage_name", y="proc_multiplier", order=STAGE_ORDER, hue="stage_name", dodge=False, legend=False, ax=axes[1, 1], palette="Set3")
-    axes[1, 1].set_title("Observed/nominal multiplier by stage")
+    sns.boxplot(
+        data=ctx["proc_audit_enriched"],
+        x="stage_name",
+        y="proc_multiplier",
+        order=STAGE_ORDER,
+        hue="stage_name",
+        dodge=False,
+        legend=False,
+        ax=axes[1, 1],
+        palette="Set3",
+    )
+    axes[1, 1].axhline(1.0, color="#475569", linewidth=1.0, linestyle="--", alpha=0.8)
+    _annotate_category_medians(axes[1, 1], ctx["proc_audit_enriched"], "stage_name", "proc_multiplier", STAGE_ORDER, fmt="{:.2f}", pad_share=0.015)
+    axes[1, 1].set_title("Multiplicador observado/nominal por estágio\nWEIGH_* fica perto de 1; SAMPLE/UNLOAD concentram a variação", fontsize=13)
+    axes[1, 1].set_xlabel("Estágio")
+    axes[1, 1].set_ylabel("Observed / nominal")
     axes[1, 1].tick_params(axis="x", rotation=15)
 
-    fig.tight_layout()
+    fig.suptitle("Comportamento da camada observacional", x=0.02, y=1.02, ha="left", fontsize=18, fontweight="bold")
+    fig.text(
+        0.02,
+        0.95,
+        "Leitura rápida: a prioridade continua relevante, mas o dataset deixa de ser rigidamente determinístico e introduz variação estruturada.",
+        fontsize=11,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.92))
     if save:
         _ensure_artifact_dir(ctx)
         fig.savefig(ctx["artifact_dir"] / "observational_layer_behavior.png", dpi=160, bbox_inches="tight")
+    return fig
+
+
+def plot_congestion_diagnostics(ctx: dict[str, Any] | None = None, save: bool = False):
+    ctx = ctx or CTX
+    congestion_vs_proc = ctx["proc_audit_enriched"].copy()
+    congestion_vs_proc["congestion_decile"] = pd.qcut(
+        congestion_vs_proc["arrival_congestion_score"],
+        q=10,
+        labels=range(1, 11),
+        duplicates="drop",
+    )
+    trend = (
+        congestion_vs_proc.groupby(["stage_name", "congestion_decile"], as_index=False, observed=False)["proc_multiplier"]
+        .median()
+        .dropna(subset=["congestion_decile"])
+    )
+
+    fig, axes = plt.subplots(1, 2, figsize=(17, 6))
+
+    sns.lineplot(
+        data=trend,
+        x="congestion_decile",
+        y="proc_multiplier",
+        hue="stage_name",
+        style="stage_name",
+        markers=True,
+        linewidth=2.0,
+        ax=axes[0],
+        palette="Set2",
+    )
+    axes[0].axhline(1.0, color="#475569", linewidth=1.0, linestyle="--", alpha=0.8)
+    axes[0].set_title("Mais congestionamento tende a inflar proc_time\nCada ponto é a mediana em um decil de congestionamento", fontsize=13)
+    axes[0].set_xlabel("Decil do congestionamento na chegada (1 = baixo, 10 = alto)")
+    axes[0].set_ylabel("Observed / nominal")
+
+    sns.boxplot(
+        data=ctx["jobs_enriched"],
+        x="regime_code",
+        y="arrival_congestion_score",
+        order=REGIME_ORDER,
+        hue="regime_code",
+        dodge=False,
+        legend=False,
+        ax=axes[1],
+        palette="mako",
+    )
+    _annotate_category_medians(axes[1], ctx["jobs_enriched"], "regime_code", "arrival_congestion_score", REGIME_ORDER, fmt="{:.2f}")
+    axes[1].set_title("Regimes mais severos concentram congestionamento maior\nAs medianas sobem de balanced para disrupted", fontsize=13)
+    axes[1].set_xlabel("Regime")
+    axes[1].set_ylabel("Arrival congestion score")
+
+    fig.suptitle("Proxy de congestionamento", x=0.02, y=1.02, ha="left", fontsize=18, fontweight="bold")
+    fig.text(
+        0.02,
+        0.95,
+        "Leitura rápida: o congestionamento não é ruído aleatório; ele se associa ao multiplicador de proc_time e é mais alto nos regimes severos.",
+        fontsize=11,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.92))
+    if save:
+        _ensure_artifact_dir(ctx)
+        fig.savefig(ctx["artifact_dir"] / "congestion_diagnostics.png", dpi=160, bbox_inches="tight")
     return fig
 
 
@@ -558,22 +766,40 @@ def plot_operational_sanity(ctx: dict[str, Any] | None = None, save: bool = Fals
     fig, axes = plt.subplots(2, 2, figsize=(18, 12))
 
     mean_heatmap = ctx["family_summary"].pivot(index="scale_code", columns="regime_code", values="avg_fifo_mean_flow_min").reindex(index=SCALE_ORDER, columns=REGIME_ORDER)
-    sns.heatmap(mean_heatmap, annot=True, fmt=".1f", cmap="YlOrBr", ax=axes[0, 0])
-    axes[0, 0].set_title("FIFO mean flow")
+    sns.heatmap(mean_heatmap, annot=True, fmt=".1f", cmap="YlOrBr", ax=axes[0, 0], cbar_kws={"label": "Minutos"})
+    axes[0, 0].set_title("Flow médio FIFO\nDeve piorar de balanced -> peak -> disrupted", fontsize=13)
+    axes[0, 0].set_xlabel("Regime")
+    axes[0, 0].set_ylabel("Escala")
 
     p95_heatmap = ctx["family_summary"].pivot(index="scale_code", columns="regime_code", values="avg_fifo_p95_flow_min").reindex(index=SCALE_ORDER, columns=REGIME_ORDER)
-    sns.heatmap(p95_heatmap, annot=True, fmt=".1f", cmap="YlGnBu", ax=axes[0, 1])
-    axes[0, 1].set_title("FIFO p95 flow")
+    sns.heatmap(p95_heatmap, annot=True, fmt=".1f", cmap="YlGnBu", ax=axes[0, 1], cbar_kws={"label": "Minutos"})
+    axes[0, 1].set_title("Flow p95 FIFO\nA cauda também deve piorar monotonicamente", fontsize=13)
+    axes[0, 1].set_xlabel("Regime")
+    axes[0, 1].set_ylabel("Escala")
 
     sns.boxplot(data=ctx["job_metrics"], x="regime_code", y="flow_time_min", order=REGIME_ORDER, hue="regime_code", dodge=False, legend=False, ax=axes[1, 0], palette="Spectral")
-    axes[1, 0].set_title("Flow time by regime")
+    _annotate_category_medians(axes[1, 0], ctx["job_metrics"], "regime_code", "flow_time_min", REGIME_ORDER)
+    axes[1, 0].set_title("Distribuição de flow time por regime\nMedianas anotadas para leitura rápida", fontsize=13)
+    axes[1, 0].set_xlabel("Regime")
+    axes[1, 0].set_ylabel("Flow time (min)")
 
     util_plot = ctx["utilization"].groupby(["machine_family", "regime_code"], as_index=False)["utilization_share"].mean()
     sns.barplot(data=util_plot, x="machine_family", y="utilization_share", hue="regime_code", hue_order=REGIME_ORDER, ax=axes[1, 1], palette="deep")
-    axes[1, 1].set_title("Machine utilization by family")
+    axes[1, 1].set_title("Utilização média por família de máquina\nBarras mais altas indicam recursos mais pressionados", fontsize=13)
+    axes[1, 1].set_xlabel("Família de máquina")
+    axes[1, 1].set_ylabel("Utilization share")
+    axes[1, 1].yaxis.set_major_formatter(PercentFormatter(1.0, decimals=0))
     axes[1, 1].tick_params(axis="x", rotation=20)
+    _label_bars(axes[1, 1], fmt="{:.0%}", pad_share=0.01)
 
-    fig.tight_layout()
+    fig.suptitle("Sanidade operacional por regime", x=0.02, y=1.02, ha="left", fontsize=18, fontweight="bold")
+    fig.text(
+        0.02,
+        0.95,
+        "Leitura rápida: em todas as escalas, balanced < peak < disrupted tanto no flow médio quanto na cauda p95.",
+        fontsize=11,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.92))
     if save:
         _ensure_artifact_dir(ctx)
         fig.savefig(ctx["artifact_dir"] / "operational_performance_and_regime_sanity.png", dpi=160, bbox_inches="tight")
@@ -586,6 +812,60 @@ def plot_instance_drilldown(instance_id: str = "GO_XS_DISRUPTED_01", ctx: dict[s
     if save:
         _ensure_artifact_dir(ctx)
         fig.savefig(ctx["artifact_dir"] / f"{instance_id.lower()}_fifo_schedule.png", dpi=160, bbox_inches="tight")
+    return fig
+
+
+def plot_job_level_views(instance_id: str = "GO_XS_DISRUPTED_01", ctx: dict[str, Any] | None = None, save: bool = False):
+    ctx = ctx or CTX
+    sample_jobs = ctx["jobs_enriched"][ctx["jobs_enriched"]["instance_id"] == instance_id]
+    sample_metrics = ctx["job_metrics"][ctx["job_metrics"]["instance_id"] == instance_id]
+
+    fig, axes = plt.subplots(1, 2, figsize=(16, 5.5))
+    sns.scatterplot(
+        data=sample_jobs,
+        x="arrival_time_min",
+        y="completion_due_min",
+        hue="priority_class",
+        hue_order=PRIORITY_ORDER,
+        palette="viridis",
+        ax=axes[0],
+        s=75,
+        alpha=0.85,
+    )
+    axes[0].set_title(f"{instance_id}: chegada vs prazo\nCada ponto representa um job e a cor indica prioridade", fontsize=13)
+    axes[0].set_xlabel("Arrival time (min)")
+    axes[0].set_ylabel("Completion due (min)")
+
+    top_flow = sample_metrics.sort_values("flow_time_min", ascending=False).head(12).sort_values("flow_time_min", ascending=True)
+    sns.barplot(
+        data=top_flow,
+        x="flow_time_min",
+        y="job_id",
+        hue="job_id",
+        dodge=False,
+        legend=False,
+        ax=axes[1],
+        palette="rocket",
+        orient="h",
+    )
+    axes[1].set_title(f"{instance_id}: 12 maiores flow times\nAs barras mais longas identificam os jobs mais críticos", fontsize=13)
+    axes[1].set_xlabel("Flow time (min)")
+    axes[1].set_ylabel("Job")
+    for patch in axes[1].patches:
+        value = patch.get_width()
+        axes[1].text(value + 1.5, patch.get_y() + patch.get_height() / 2, f"{value:.0f}", va="center", ha="left", fontsize=8, color="#334155")
+
+    fig.suptitle("Drilldown de jobs", x=0.02, y=1.03, ha="left", fontsize=18, fontweight="bold")
+    fig.text(
+        0.02,
+        0.95,
+        "Leitura rápida: o cronograma respeita a ordem de máquina, e os jobs críticos aparecem tanto no Gantt quanto no ranking de flow time.",
+        fontsize=11,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.90))
+    if save:
+        _ensure_artifact_dir(ctx)
+        fig.savefig(ctx["artifact_dir"] / f"{instance_id.lower()}_job_level_views.png", dpi=160, bbox_inches="tight")
     return fig
 
 
@@ -605,8 +885,10 @@ def export_all_artifacts(ctx: dict[str, Any] | None = None, instance_id: str = "
     plot_inventory_overview(ctx, save=True)
     plot_validation_overview(ctx, save=True)
     plot_observational_layer(ctx, save=True)
+    plot_congestion_diagnostics(ctx, save=True)
     plot_operational_sanity(ctx, save=True)
     plot_instance_drilldown(instance_id=instance_id, ctx=ctx, save=True)
+    plot_job_level_views(instance_id=instance_id, ctx=ctx, save=True)
     return ctx["artifact_dir"]
 
 
@@ -620,8 +902,10 @@ def repl_help() -> None:
     print("  plot_inventory_overview()")
     print("  plot_validation_overview()")
     print("  plot_observational_layer()")
+    print("  plot_congestion_diagnostics()")
     print("  plot_operational_sanity()")
     print("  plot_instance_drilldown('GO_XS_DISRUPTED_01')")
+    print("  plot_job_level_views('GO_XS_DISRUPTED_01')")
     print("  export_all_artifacts()")
 
 
