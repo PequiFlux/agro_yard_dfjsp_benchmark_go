@@ -34,62 +34,69 @@ Em outras palavras: o problema continua sendo o mesmo benchmark D-FJSP; o que mu
 
 ### 1. Prazo observado por job
 
-```text
-slack_obs_j =
-    b(priority_j)
-  + f(appointment_j, commodity_j, moisture_j, shift_j, regime)
-  + u_inst
-  + u_shift(j)
-  + eps_j
-```
+$$
+\operatorname{slack}^{obs}_j =
+b(\operatorname{priority}_j)
++ f(\operatorname{appointment}_j,\operatorname{commodity}_j,\operatorname{moisture}_j,\operatorname{shift}_j,\operatorname{regime})
++ u_{\operatorname{inst}}
++ u_{\operatorname{shift}(j)}
++ \varepsilon_j
+$$
 
-```text
-due_obs_j = arrival_j + clip(slack_obs_j, LB_j + 18, b(priority_j) + 120)
-```
+$$
+\operatorname{due}^{obs}_j =
+\operatorname{arrival}_j +
+\operatorname{clip}\!\left(
+\operatorname{slack}^{obs}_j,\,
+LB_j + 18,\,
+b(\operatorname{priority}_j) + 120
+\right)
+$$
 
 Onde:
 
-- `b(priority_j)` é a folga base por classe de prioridade
-- `f(.)` agrega efeitos fixos pequenos e interpretáveis
-- `u_inst` é um efeito latente da instância
-- `u_shift(j)` é um efeito latente do turno
-- `eps_j` é ruído Student-t com escala dependente do regime
-- `LB_j` é o lower bound físico plausível do job, calculado como a soma dos menores tempos elegíveis de suas quatro operações
+- $b(\operatorname{priority}_j)$ é a folga base por classe de prioridade
+- $f(\cdot)$ agrega efeitos fixos pequenos e interpretáveis
+- $u_{\operatorname{inst}}$ é um efeito latente da instância
+- $u_{\operatorname{shift}(j)}$ é um efeito latente do turno
+- $\varepsilon_j$ é ruído Student-t com escala dependente do regime
+- $LB_j$ é o lower bound físico plausível do job, calculado como a soma dos menores tempos elegíveis de suas quatro operações
 
 ### 2. Tempo observado por tripla `(job, op, machine)`
 
-```text
-p_obs_jom =
-  max(
-    p_stage_min,
-    round(
-      p_nom_jom * exp(
-        u_m
-      + u_shift
-      + u_stage_inst
-      + u_regime
-      + beta_stage * g_j
-      + u_commodity
-      + u_moisture
-      + eps_jom
-      )
-      + pause_jom
-    )
-  )
-```
+$$
+p^{obs}_{jom} =
+\max\!\left(
+p^{\min}_{\operatorname{stage}},
+\operatorname{round}\!\left(
+p^{nom}_{jom}\cdot
+\exp\!\left(
+u_m
++ u_{\operatorname{shift}}
++ u_{\operatorname{stage,inst}}
++ u_{\operatorname{regime}}
++ \beta_{\operatorname{stage}}\, g_j
++ u_{\operatorname{commodity}}
++ u_{\operatorname{moisture}}
++ \varepsilon_{jom}
+\right)
++ \operatorname{pause}_{jom}
+\right)
+\right)
+$$
 
 Onde:
 
-- `p_nom_jom` é o tempo nominal original
-- `u_m` é um efeito persistente da máquina
-- `u_shift` é um efeito do turno
-- `u_stage_inst` é um efeito latente do estágio na instância
-- `u_regime` captura o ambiente `balanced / peak / disrupted`
-- `g_j` é o proxy contínuo de congestionamento derivado das chegadas
-- `u_commodity` e `u_moisture` são ajustes semânticos pequenos
-- `eps_jom` é ruído idiossincrático
-- `pause_jom` representa microparadas ocasionais
-- `p_stage_min` impõe um piso por estágio
+- $p^{nom}_{jom}$ é o tempo nominal original
+- $u_m$ é um efeito persistente da máquina
+- $u_{\operatorname{shift}}$ é um efeito do turno
+- $u_{\operatorname{stage,inst}}$ é um efeito latente do estágio na instância
+- $u_{\operatorname{regime}}$ captura o ambiente `balanced / peak / disrupted`
+- $g_j$ é o proxy contínuo de congestionamento derivado das chegadas
+- $u_{\operatorname{commodity}}$ e $u_{\operatorname{moisture}}$ são ajustes semânticos pequenos
+- $\varepsilon_{jom}$ é ruído idiossincrático
+- $\operatorname{pause}_{jom}$ representa microparadas ocasionais
+- $p^{\min}_{\operatorname{stage}}$ impõe um piso por estágio
 
 ## Como validamos
 
@@ -179,6 +186,8 @@ Imagens principais:
 ![Operational performance and regime sanity](output/jupyter-notebook/instance_validation_analysis_artifacts/operational_performance_and_regime_sanity.png)
 
 ![FIFO schedule drilldown for GO_XS_DISRUPTED_01](output/jupyter-notebook/instance_validation_analysis_artifacts/go_xs_disrupted_01_fifo_schedule.png)
+
+O drilldown FIFO acima foi regenerado na versão atual do notebook com menos rótulos, destaque explícito de downtime e separação visual mais limpa entre as faixas de máquina. O arquivo `.ipynb` salvo no repositório já contém essa saída embutida.
 
 Figuras complementares:
 
