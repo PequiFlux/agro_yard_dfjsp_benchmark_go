@@ -41,6 +41,7 @@ Main helper functions:
 from __future__ import annotations
 
 import json
+import hashlib
 import sys
 from pathlib import Path
 from typing import Any
@@ -68,6 +69,16 @@ STAGE_ORDER = ["WEIGH_IN", "SAMPLE_CLASSIFY", "UNLOAD", "WEIGH_OUT"]
 REGIME_ORDER = ["balanced", "peak", "disrupted"]
 SCALE_ORDER = ["XS", "S", "M", "L"]
 PRIORITY_ORDER = ["URGENT", "CONTRACTED", "REGULAR"]
+INSTANCE_SPACE_DUPLICATE_LIKE_THRESHOLD = 2.0
+CORE_DIGEST_FILES = [
+    "jobs.csv",
+    "operations.csv",
+    "eligible_machines.csv",
+    "machines.csv",
+    "precedences.csv",
+    "machine_downtimes.csv",
+    "events.csv",
+]
 
 
 def find_repo_root(start: Path) -> Path:
@@ -288,6 +299,316 @@ def build_fifo_schema_report(
     return pd.DataFrame(rows)
 
 
+def build_release_consistency_report(
+    root: Path,
+    manifest: dict[str, Any],
+    observed_noise_manifest: dict[str, Any],
+    params: pd.DataFrame,
+) -> pd.DataFrame:
+    param_versions = sorted(params["dataset_version"].dropna().astype(str).unique().tolist())
+    parent_versions = sorted(params["parent_dataset_version"].dropna().astype(str).unique().tolist())
+    noise_model_ids = sorted(params["observational_noise_model_id"].dropna().astype(str).unique().tolist())
+
+    rows = [
+        {
+            "check_name": "manifest_dataset_version_matches_instance_params",
+            "expected": manifest.get("dataset_version"),
+            "observed": ", ".join(param_versions),
+            "pass": param_versions == [manifest.get("dataset_version")],
+        },
+        {
+            "check_name": "manifest_parent_dataset_version_matches_instance_params",
+            "expected": manifest.get("parent_dataset_version"),
+            "observed": ", ".join(parent_versions),
+            "pass": parent_versions == [manifest.get("parent_dataset_version")],
+        },
+        {
+            "check_name": "manifest_noise_model_id_matches_instance_params",
+            "expected": manifest.get("observational_noise_model_id"),
+            "observed": ", ".join(noise_model_ids),
+            "pass": noise_model_ids == [manifest.get("observational_noise_model_id")],
+        },
+        {
+            "check_name": "noise_manifest_model_id_matches_root_manifest",
+            "expected": manifest.get("observational_noise_model_id"),
+            "observed": observed_noise_manifest.get("model_id"),
+            "pass": observed_noise_manifest.get("model_id") == manifest.get("observational_noise_model_id"),
+        },
+        {
+            "check_name": "noise_manifest_repository_url_matches_root_manifest",
+            "expected": manifest.get("repository_url"),
+            "observed": observed_noise_manifest.get("official_release_repository_url"),
+            "pass": observed_noise_manifest.get("official_release_repository_url") == manifest.get("repository_url"),
+        },
+        {
+            "check_name": "noise_manifest_release_root_matches_repo_root",
+            "expected": str(root),
+            "observed": observed_noise_manifest.get("official_release_root"),
+            "pass": observed_noise_manifest.get("official_release_root") == str(root),
+        },
+        {
+            "check_name": "noise_manifest_generated_with_matches_root_manifest",
+            "expected": manifest.get("generated_with"),
+            "observed": observed_noise_manifest.get("generated_with"),
+            "pass": observed_noise_manifest.get("generated_with") == manifest.get("generated_with"),
+        },
+    ]
+    return pd.DataFrame(rows)
+
+
+def build_core_instance_digest_frame(root: Path) -> pd.DataFrame:
+    rows = []
+    for inst_dir in iter_instance_dirs(root):
+        digest = hashlib.sha256()
+        for file_name in CORE_DIGEST_FILES:
+            digest.update(file_name.encode("utf-8"))
+            digest.update((inst_dir / file_name).read_bytes())
+        rows.append({"instance_id": inst_dir.name, "core_instance_digest": digest.hexdigest()})
+    return pd.DataFrame(rows)
+
+
+def _standardize_feature_matrix(feature_frame: pd.DataFrame, feature_cols: list[str]) -> np.ndarray:
+    matrix = feature_frame[feature_cols].astype(float).to_numpy()
+    means = matrix.mean(axis=0)
+    stds = matrix.std(axis=0, ddof=0)
+    stds[stds == 0] = 1.0
+    return (matrix - means) / stds
+
+
+def build_instance_space_validation(
+    root: Path,
+    params: pd.DataFrame,
+    jobs_enriched: pd.DataFrame,
+    eligible: pd.DataFrame,
+    machines: pd.DataFrame,
+    downtimes: pd.DataFrame,
+    job_metrics: pd.DataFrame,
+    utilization: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    core_digests = build_core_instance_digest_frame(root)
+
+    job_agg = (
+        jobs_enriched.groupby("instance_id", as_index=False)
+        .agg(
+            n_jobs=("job_id", "count"),
+            appointment_share=("appointment_flag", "mean"),
+            urgent_share=("priority_class", lambda s: s.eq("URGENT").mean()),
+            contracted_share=("priority_class", lambda s: s.eq("CONTRACTED").mean()),
+            commodity_nunique=("commodity", "nunique"),
+            moisture_nunique=("moisture_class", "nunique"),
+            load_mean=("load_tons", "mean"),
+            load_std=("load_tons", "std"),
+            due_margin_mean=("due_margin_over_lb_min", "mean"),
+            due_margin_std=("due_margin_over_lb_min", "std"),
+            arrival_mean=("arrival_time_min", "mean"),
+            arrival_std=("arrival_time_min", "std"),
+            congestion_mean=("arrival_congestion_score", "mean"),
+            congestion_std=("arrival_congestion_score", "std"),
+        )
+    )
+
+    eligible_per_operation = (
+        eligible.groupby(["instance_id", "job_id", "op_seq"], as_index=False)["machine_id"]
+        .count()
+        .rename(columns={"machine_id": "eligible_machine_count"})
+    )
+    eligible_summary = eligible_per_operation.groupby("instance_id", as_index=False).agg(
+        eligible_machine_mean=("eligible_machine_count", "mean"),
+        eligible_machine_std=("eligible_machine_count", "std"),
+        eligible_machine_min=("eligible_machine_count", "min"),
+        eligible_machine_max=("eligible_machine_count", "max"),
+    )
+
+    eligible_rows = eligible.groupby("instance_id", as_index=False).size().rename(columns={"size": "eligible_rows"})
+    proc_summary = eligible.groupby("instance_id", as_index=False).agg(
+        proc_time_mean=("proc_time_min", "mean"),
+        proc_time_std=("proc_time_min", "std"),
+        proc_time_min=("proc_time_min", "min"),
+        proc_time_max=("proc_time_min", "max"),
+    )
+
+    machine_counts = (
+        machines.groupby(["instance_id", "machine_family"], as_index=False)
+        .size()
+        .pivot(index="instance_id", columns="machine_family", values="size")
+        .fillna(0)
+        .reset_index()
+    )
+    machine_counts = machine_counts.rename(
+        columns={
+            "WB": "wb_machine_count",
+            "LAB": "lab_machine_count",
+            "HOP": "hop_machine_count",
+        }
+    )
+    for column in ["wb_machine_count", "lab_machine_count", "hop_machine_count"]:
+        if column not in machine_counts.columns:
+            machine_counts[column] = 0
+    machine_counts = machine_counts[
+        ["instance_id", "wb_machine_count", "lab_machine_count", "hop_machine_count"]
+    ]
+    machine_counts["machine_count"] = (
+        machine_counts["wb_machine_count"]
+        + machine_counts["lab_machine_count"]
+        + machine_counts["hop_machine_count"]
+    )
+
+    downtime_summary = (
+        downtimes.assign(downtime_duration_min=downtimes["end_min"] - downtimes["start_min"])
+        .groupby("instance_id", as_index=False)
+        .agg(
+            downtime_count=("machine_id", "count"),
+            downtime_total_min=("downtime_duration_min", "sum"),
+        )
+    )
+
+    metric_summary = (
+        job_metrics.groupby("instance_id", as_index=False)
+        .agg(
+            flow_mean=("flow_time_min", "mean"),
+            flow_p95=("flow_time_min", lambda s: float(np.quantile(s, 0.95))),
+            queue_mean=("queue_time_min", "mean"),
+            queue_p95=("queue_time_min", lambda s: float(np.quantile(s, 0.95))),
+        )
+    )
+
+    utilization_by_family = (
+        utilization.groupby(["instance_id", "machine_family"], as_index=False)["utilization_share"]
+        .mean()
+        .pivot(index="instance_id", columns="machine_family", values="utilization_share")
+        .fillna(0.0)
+        .reset_index()
+    )
+    utilization_by_family = utilization_by_family.rename(
+        columns={"WB": "wb_utilization_mean", "LAB": "lab_utilization_mean", "HOP": "hop_utilization_mean"}
+    )
+    for column in ["wb_utilization_mean", "lab_utilization_mean", "hop_utilization_mean"]:
+        if column not in utilization_by_family.columns:
+            utilization_by_family[column] = 0.0
+    utilization_by_family = utilization_by_family[
+        ["instance_id", "wb_utilization_mean", "lab_utilization_mean", "hop_utilization_mean"]
+    ]
+
+    feature_frame = (
+        params[["instance_id", "scale_code", "regime_code", "replicate", "planning_horizon_min"]]
+        .merge(core_digests, on="instance_id", how="left")
+        .merge(job_agg, on="instance_id", how="left")
+        .merge(eligible_summary, on="instance_id", how="left")
+        .merge(eligible_rows, on="instance_id", how="left")
+        .merge(proc_summary, on="instance_id", how="left")
+        .merge(machine_counts, on="instance_id", how="left")
+        .merge(downtime_summary, on="instance_id", how="left")
+        .merge(metric_summary, on="instance_id", how="left")
+        .merge(utilization_by_family, on="instance_id", how="left")
+        .sort_values(["scale_code", "regime_code", "replicate"])
+        .reset_index(drop=True)
+    )
+
+    numeric_cols = [
+        "planning_horizon_min",
+        "n_jobs",
+        "appointment_share",
+        "urgent_share",
+        "contracted_share",
+        "commodity_nunique",
+        "moisture_nunique",
+        "load_mean",
+        "load_std",
+        "due_margin_mean",
+        "due_margin_std",
+        "arrival_mean",
+        "arrival_std",
+        "congestion_mean",
+        "congestion_std",
+        "eligible_machine_mean",
+        "eligible_machine_std",
+        "eligible_machine_min",
+        "eligible_machine_max",
+        "eligible_rows",
+        "proc_time_mean",
+        "proc_time_std",
+        "proc_time_min",
+        "proc_time_max",
+        "wb_machine_count",
+        "lab_machine_count",
+        "hop_machine_count",
+        "machine_count",
+        "downtime_count",
+        "downtime_total_min",
+        "flow_mean",
+        "flow_p95",
+        "queue_mean",
+        "queue_p95",
+        "wb_utilization_mean",
+        "lab_utilization_mean",
+        "hop_utilization_mean",
+    ]
+    feature_frame[numeric_cols] = (
+        feature_frame[numeric_cols].apply(pd.to_numeric, errors="coerce").fillna(0.0).astype(float)
+    )
+
+    standardized = _standardize_feature_matrix(feature_frame, numeric_cols)
+    _, singular_values, right_vectors = np.linalg.svd(standardized, full_matrices=False)
+    explained_variance_ratio = (singular_values ** 2) / np.sum(singular_values ** 2)
+    pcs = standardized @ right_vectors[:2].T
+    feature_frame["pc1"] = pcs[:, 0]
+    feature_frame["pc2"] = pcs[:, 1]
+
+    distance_matrix = np.sqrt(((standardized[:, None, :] - standardized[None, :, :]) ** 2).sum(axis=2))
+    np.fill_diagonal(distance_matrix, np.inf)
+    nearest_neighbor_idx = distance_matrix.argmin(axis=1)
+    feature_frame["nearest_neighbor_instance_id"] = feature_frame.loc[nearest_neighbor_idx, "instance_id"].to_numpy()
+    feature_frame["nearest_neighbor_distance"] = distance_matrix[np.arange(len(feature_frame)), nearest_neighbor_idx]
+
+    digest_counts = feature_frame["core_instance_digest"].value_counts()
+    feature_frame["exact_core_duplicate"] = feature_frame["core_instance_digest"].map(digest_counts).gt(1)
+
+    rounded_features = pd.DataFrame(np.round(standardized, 6))
+    feature_frame["exact_feature_duplicate"] = rounded_features.duplicated(keep=False)
+    feature_frame["duplicate_like_candidate"] = (
+        feature_frame["nearest_neighbor_distance"] < INSTANCE_SPACE_DUPLICATE_LIKE_THRESHOLD
+    )
+
+    pair_rows = []
+    for i in range(len(feature_frame)):
+        for j in range(i + 1, len(feature_frame)):
+            pair_rows.append(
+                {
+                    "instance_a": feature_frame.loc[i, "instance_id"],
+                    "instance_b": feature_frame.loc[j, "instance_id"],
+                    "scale_a": feature_frame.loc[i, "scale_code"],
+                    "scale_b": feature_frame.loc[j, "scale_code"],
+                    "regime_a": feature_frame.loc[i, "regime_code"],
+                    "regime_b": feature_frame.loc[j, "regime_code"],
+                    "distance": float(distance_matrix[i, j]),
+                    "duplicate_like_under_threshold": bool(
+                        distance_matrix[i, j] < INSTANCE_SPACE_DUPLICATE_LIKE_THRESHOLD
+                    ),
+                }
+            )
+    closest_pairs = pd.DataFrame(pair_rows).sort_values("distance").reset_index(drop=True)
+
+    summary = pd.DataFrame(
+        [
+            {
+                "instance_count": int(len(feature_frame)),
+                "feature_count": int(len(numeric_cols)),
+                "pca_pc1_explained_variance_ratio": float(explained_variance_ratio[0]),
+                "pca_pc2_explained_variance_ratio": float(explained_variance_ratio[1]),
+                "pca_pc1_pc2_explained_variance_ratio": float(explained_variance_ratio[:2].sum()),
+                "exact_core_duplicate_count": int(feature_frame["exact_core_duplicate"].sum()),
+                "exact_feature_duplicate_count": int(feature_frame["exact_feature_duplicate"].sum()),
+                "duplicate_like_threshold": float(INSTANCE_SPACE_DUPLICATE_LIKE_THRESHOLD),
+                "duplicate_like_candidate_count": int(feature_frame["duplicate_like_candidate"].sum()),
+                "nearest_neighbor_distance_min": float(feature_frame["nearest_neighbor_distance"].min()),
+                "nearest_neighbor_distance_median": float(feature_frame["nearest_neighbor_distance"].median()),
+                "nearest_neighbor_distance_max": float(feature_frame["nearest_neighbor_distance"].max()),
+            }
+        ]
+    )
+    return feature_frame, closest_pairs, summary
+
+
 def machine_utilization_frame(schedule: pd.DataFrame, machines: pd.DataFrame, params: pd.DataFrame) -> pd.DataFrame:
     busy = (
         schedule.assign(busy_min=schedule["end_min"] - schedule["start_min"])
@@ -428,7 +749,18 @@ def load_context(root: Path = REPO_ROOT) -> dict[str, Any]:
         on="instance_id",
         how="left",
     )
+    release_consistency_report = build_release_consistency_report(root, manifest, observed_noise_manifest, params)
     utilization = machine_utilization_frame(schedule, machines, params)
+    instance_space_features, instance_space_pairs, instance_space_summary = build_instance_space_validation(
+        root=root,
+        params=params,
+        jobs_enriched=jobs_enriched,
+        eligible=eligible,
+        machines=machines,
+        downtimes=downtimes,
+        job_metrics=job_metrics,
+        utilization=utilization,
+    )
     diagnostics = release_diagnostics(root)
 
     unload = (
@@ -456,6 +788,7 @@ def load_context(root: Path = REPO_ROOT) -> dict[str, Any]:
         "eligible_rows": int(len(eligible)),
         "machine_rows": int(len(machines)),
         "structural_pass_rate": float((structural_report["status"] == "PASS").mean()),
+        "release_consistency_checks_pass": bool(release_consistency_report["pass"].all()),
         "due_audit_match_share": float(audit_reconciliation["due_match_share"].mean()),
         "proc_audit_match_share": float(audit_reconciliation["proc_match_share"].mean()),
         "r2_due_slack_vs_priority": float(diagnostics["r2_due_slack_vs_priority"]),
@@ -474,6 +807,16 @@ def load_context(root: Path = REPO_ROOT) -> dict[str, Any]:
         "flow_regime_order_checks_pass": bool(regime_checks["mean_flow_order_ok"].all() and regime_checks["p95_flow_order_ok"].all()),
         "queue_regime_order_checks_pass": bool(regime_checks["mean_queue_order_ok"].all()),
         "congestion_mean_regime_order_checks_pass": bool(regime_checks["mean_congestion_order_ok"].all()),
+        "instance_space_exact_duplicate_checks_pass": bool(
+            instance_space_summary.loc[0, "exact_core_duplicate_count"] == 0
+            and instance_space_summary.loc[0, "exact_feature_duplicate_count"] == 0
+        ),
+        "instance_space_duplicate_like_checks_pass": bool(
+            instance_space_summary.loc[0, "duplicate_like_candidate_count"] == 0
+        ),
+        "instance_space_nearest_neighbor_distance_min": float(
+            instance_space_summary.loc[0, "nearest_neighbor_distance_min"]
+        ),
         "g2milp_role": manifest.get("official_dataset_role", ""),
     }
 
@@ -505,7 +848,11 @@ def load_context(root: Path = REPO_ROOT) -> dict[str, Any]:
         "audit_reconciliation": audit_reconciliation,
         "regime_checks": regime_checks,
         "fifo_schema_report": fifo_schema_report,
+        "release_consistency_report": release_consistency_report,
         "utilization": utilization,
+        "instance_space_features": instance_space_features,
+        "instance_space_pairs": instance_space_pairs,
+        "instance_space_summary": instance_space_summary,
         "diagnostics": diagnostics,
         "unload": unload,
         "summary": summary,
@@ -540,7 +887,11 @@ EVENT_REPORT = CTX["event_report"]
 AUDIT_RECONCILIATION = CTX["audit_reconciliation"]
 REGIME_CHECKS = CTX["regime_checks"]
 FIFO_SCHEMA_REPORT = CTX["fifo_schema_report"]
+RELEASE_CONSISTENCY_REPORT = CTX["release_consistency_report"]
 UTILIZATION = CTX["utilization"]
+INSTANCE_SPACE_FEATURES = CTX["instance_space_features"]
+INSTANCE_SPACE_PAIRS = CTX["instance_space_pairs"]
+INSTANCE_SPACE_SUMMARY = CTX["instance_space_summary"]
 DIAGNOSTICS = CTX["diagnostics"]
 UNLOAD = CTX["unload"]
 
@@ -575,7 +926,19 @@ def validation_tables(ctx: dict[str, Any] | None = None) -> dict[str, pd.DataFra
         "event_report": ctx["event_report"].sort_values(["scale_code", "regime_code", "instance_id"]),
         "audit_reconciliation": ctx["audit_reconciliation"].sort_values(["scale_code", "regime_code", "instance_id"]),
         "fifo_schema_report": ctx["fifo_schema_report"].sort_values(["scale_code", "regime_code", "instance_id"]),
+        "release_consistency_report": ctx["release_consistency_report"].copy(),
         "due_margin_summary": due_margin_summary,
+    }
+
+
+def instance_space_tables(ctx: dict[str, Any] | None = None) -> dict[str, pd.DataFrame]:
+    ctx = ctx or CTX
+    return {
+        "instance_space_features": ctx["instance_space_features"].sort_values(
+            ["nearest_neighbor_distance", "scale_code", "regime_code", "instance_id"]
+        ),
+        "instance_space_pairs": ctx["instance_space_pairs"].copy(),
+        "instance_space_summary": ctx["instance_space_summary"].copy(),
     }
 
 
@@ -917,6 +1280,147 @@ def plot_operational_sanity(ctx: dict[str, Any] | None = None, save: bool = Fals
     return fig
 
 
+def plot_instance_space_coverage(ctx: dict[str, Any] | None = None, save: bool = False):
+    ctx = ctx or CTX
+    feature_frame = ctx["instance_space_features"].copy()
+    closest_pairs = ctx["instance_space_pairs"].head(8).copy()
+    summary = ctx["instance_space_summary"].iloc[0]
+
+    fig, axes = plt.subplots(1, 3, figsize=(20, 6.5))
+    palette = {"balanced": "#2a9d8f", "peak": "#e9c46a", "disrupted": "#e76f51"}
+    markers = {"XS": "o", "S": "s", "M": "D", "L": "^"}
+
+    sns.scatterplot(
+        data=feature_frame,
+        x="pc1",
+        y="pc2",
+        hue="regime_code",
+        hue_order=REGIME_ORDER,
+        style="scale_code",
+        style_order=SCALE_ORDER,
+        markers=markers,
+        palette=palette,
+        s=110,
+        edgecolor="white",
+        linewidth=0.8,
+        ax=axes[0],
+    )
+    axes[0].set_title(
+        "PCA do espaço de instâncias\nPC1 + PC2 resumem a dispersão multivariada",
+        fontsize=13,
+    )
+    axes[0].set_xlabel(f"PC1 ({summary['pca_pc1_explained_variance_ratio']:.1%} da variância)")
+    axes[0].set_ylabel(f"PC2 ({summary['pca_pc2_explained_variance_ratio']:.1%} da variância)")
+    handles, labels = axes[0].get_legend_handles_labels()
+    if handles:
+        axes[0].legend(handles, labels, title="Regime / escala", loc="best", frameon=True)
+
+    nn_plot = feature_frame.sort_values("nearest_neighbor_distance").copy()
+    sns.histplot(
+        data=nn_plot,
+        x="nearest_neighbor_distance",
+        bins=10,
+        color="#5b8e7d",
+        edgecolor="white",
+        alpha=0.9,
+        ax=axes[1],
+    )
+    axes[1].axvline(
+        INSTANCE_SPACE_DUPLICATE_LIKE_THRESHOLD,
+        color="#475569",
+        linestyle="--",
+        linewidth=1.2,
+        alpha=0.9,
+    )
+    axes[1].set_title(
+        "Distância ao vizinho mais próximo\nLinha tracejada = limiar de screening duplicate-like",
+        fontsize=13,
+    )
+    axes[1].set_xlabel("Distância Euclidiana em features padronizadas")
+    axes[1].set_ylabel("Número de instâncias")
+    axes[1].axvline(
+        float(summary["nearest_neighbor_distance_median"]),
+        color="#0f172a",
+        linestyle=":",
+        linewidth=1.2,
+        alpha=0.9,
+    )
+    axes[1].text(
+        float(summary["nearest_neighbor_distance_min"]) + 0.06,
+        max(axes[1].get_ylim()) * 0.92,
+        f"min = {summary['nearest_neighbor_distance_min']:.2f}",
+        fontsize=10,
+        color="#334155",
+    )
+    axes[1].text(
+        float(summary["nearest_neighbor_distance_median"]) + 0.06,
+        max(axes[1].get_ylim()) * 0.78,
+        f"mediana = {summary['nearest_neighbor_distance_median']:.2f}",
+        fontsize=10,
+        color="#334155",
+    )
+
+    def _short_instance_label(label: str) -> str:
+        return (
+            label.replace("GO_", "")
+            .replace("BALANCED", "BAL")
+            .replace("DISRUPTED", "DISR")
+        )
+
+    closest_pairs["pair_label"] = closest_pairs["instance_a"].map(_short_instance_label) + " ↔ " + closest_pairs["instance_b"].map(_short_instance_label)
+    sns.barplot(
+        data=closest_pairs.sort_values("distance", ascending=True),
+        x="distance",
+        y="pair_label",
+        hue="duplicate_like_under_threshold",
+        dodge=False,
+        palette={False: "#8ecae6", True: "#d62828"},
+        ax=axes[2],
+    )
+    axes[2].axvline(
+        INSTANCE_SPACE_DUPLICATE_LIKE_THRESHOLD,
+        color="#475569",
+        linestyle="--",
+        linewidth=1.2,
+        alpha=0.9,
+    )
+    axes[2].set_title("Pares mais próximos do release\nNenhum par cai na zona de suspeita", fontsize=13)
+    axes[2].set_xlabel("Distância Euclidiana em features padronizadas")
+    axes[2].set_ylabel("")
+    if closest_pairs["duplicate_like_under_threshold"].nunique() > 1:
+        axes[2].legend(title="Abaixo do limiar", loc="lower right", frameon=True)
+    else:
+        legend = axes[2].get_legend()
+        if legend is not None:
+            legend.remove()
+        axes[2].text(
+            0.98,
+            0.06,
+            "0 pares abaixo do limiar",
+            transform=axes[2].transAxes,
+            ha="right",
+            va="bottom",
+            fontsize=10,
+            color="#334155",
+        )
+
+    fig.suptitle("Cobertura do espaço de instâncias", x=0.02, y=1.03, ha="left", fontsize=18, fontweight="bold")
+    fig.text(
+        0.02,
+        0.95,
+        (
+            "Leitura rápida: o release não tem duplicatas exatas e o vizinho mais próximo mais apertado ainda fica "
+            f"em {summary['nearest_neighbor_distance_min']:.2f}, bem acima do limiar heurístico {INSTANCE_SPACE_DUPLICATE_LIKE_THRESHOLD:.1f}."
+        ),
+        fontsize=11,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.92))
+    if save:
+        _ensure_artifact_dir(ctx)
+        fig.savefig(ctx["artifact_dir"] / "instance_space_coverage.png", dpi=160, bbox_inches="tight")
+    return fig
+
+
 def plot_instance_drilldown(instance_id: str = "GO_XS_DISRUPTED_01", ctx: dict[str, Any] | None = None, save: bool = False):
     ctx = ctx or CTX
     fig = schedule_plot(instance_id, ctx["schedule"], ctx["downtimes"])
@@ -992,13 +1496,18 @@ def export_all_artifacts(ctx: dict[str, Any] | None = None, instance_id: str = "
     validation_tables(ctx)["event_report"].to_csv(ctx["artifact_dir"] / "event_report.csv", index=False)
     validation_tables(ctx)["audit_reconciliation"].to_csv(ctx["artifact_dir"] / "audit_reconciliation.csv", index=False)
     validation_tables(ctx)["fifo_schema_report"].to_csv(ctx["artifact_dir"] / "fifo_schema_report.csv", index=False)
+    validation_tables(ctx)["release_consistency_report"].to_csv(ctx["artifact_dir"] / "release_consistency_report.csv", index=False)
     validation_tables(ctx)["due_margin_summary"].to_csv(ctx["artifact_dir"] / "due_margin_summary.csv", index=False)
+    instance_space_tables(ctx)["instance_space_features"].to_csv(ctx["artifact_dir"] / "instance_space_features.csv", index=False)
+    instance_space_tables(ctx)["instance_space_pairs"].to_csv(ctx["artifact_dir"] / "instance_space_pairs.csv", index=False)
+    instance_space_tables(ctx)["instance_space_summary"].to_csv(ctx["artifact_dir"] / "instance_space_summary.csv", index=False)
     pd.DataFrame([ctx["summary"]]).to_csv(ctx["artifact_dir"] / "repl_summary.csv", index=False)
     plot_inventory_overview(ctx, save=True)
     plot_validation_overview(ctx, save=True)
     plot_observational_layer(ctx, save=True)
     plot_congestion_diagnostics(ctx, save=True)
     plot_operational_sanity(ctx, save=True)
+    plot_instance_space_coverage(ctx, save=True)
     plot_instance_drilldown(instance_id=instance_id, ctx=ctx, save=True)
     plot_job_level_views(instance_id=instance_id, ctx=ctx, save=True)
     return ctx["artifact_dir"]
@@ -1016,6 +1525,7 @@ def repl_help() -> None:
     print("  plot_observational_layer()")
     print("  plot_congestion_diagnostics()")
     print("  plot_operational_sanity()")
+    print("  plot_instance_space_coverage()")
     print("  plot_instance_drilldown('GO_XS_DISRUPTED_01')")
     print("  plot_job_level_views('GO_XS_DISRUPTED_01')")
     print("  export_all_artifacts()")

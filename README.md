@@ -135,27 +135,39 @@ O notebook `output/jupyter-notebook/instance-validation-and-exploratory-analysis
 Resumo dos resultados agregados:
 
 - `structural_pass_rate = 1.0000`
+- `release_consistency_checks_pass = True`
 - `fifo_schema_checks_pass = True`
 - `due_audit_match_share = 1.0000`
 - `proc_audit_match_share = 1.0000`
 - `flow_regime_order_checks_pass = True`
 - `queue_regime_order_checks_pass = True`
 - `congestion_mean_regime_order_checks_pass = False`
+- `instance_space_exact_duplicate_checks_pass = True`
+- `instance_space_duplicate_like_checks_pass = True`
+- menor distância ao vizinho mais próximo no espaço padronizado de features: `2.3228`
 - soma total de mismatches em eventos: `0` para `JOB_VISIBLE`, `JOB_ARRIVAL`, `MACHINE_DOWN` e `MACHINE_UP`
 - margem observada sobre o lower bound físico no resumo por escala/regime: de `124` a `353` minutos
 
 Leitura correta desses checks:
 
 - `fifo_schema_checks_pass = True` significa que o baseline FIFO respeita elegibilidade, `release_time`, precedência, ausência de overlap e ausência de execução atravessando downtime nas `36` instâncias
+- `release_consistency_checks_pass = True` significa que `manifest.json`, `params.json` e `observed_noise_manifest.json` estão consistentes entre si para `dataset_version`, `parent_dataset_version`, `noise_model_id` e URLs canônicas do release
+- no release oficial atual, isso implica que o ruído de governança mais comum nessa etapa, a divergência entre a versão raiz do dataset e a versão declarada nas instâncias, não está presente
 - `flow_regime_order_checks_pass = True` cobre apenas a monotonicidade de `avg_fifo_mean_flow_min` e `avg_fifo_p95_flow_min`
 - `queue_regime_order_checks_pass = True` indica que a fila média também preserva `balanced < peak < disrupted`
 - `congestion_mean_regime_order_checks_pass = False` indica que a média do proxy `arrival_congestion_score` não é monotônica em todas as famílias; isso não invalida o benchmark, porque esse proxy é auxiliar e não a métrica-alvo do problema
+- `instance_space_exact_duplicate_checks_pass = True` significa que o notebook não encontrou duplicatas exatas nem por digest dos arquivos centrais da instância nem por vetor de features padronizado
+- `instance_space_duplicate_like_checks_pass = True` significa que nenhuma instância caiu abaixo do limiar heurístico de screening no espaço multivariado usado para PCA e vizinho mais próximo
 
 Artefatos tabulares principais:
 
 - `output/jupyter-notebook/instance_validation_analysis_artifacts/notebook_summary.csv`
 - `output/jupyter-notebook/instance_validation_analysis_artifacts/structural_report.csv`
 - `output/jupyter-notebook/instance_validation_analysis_artifacts/fifo_schema_report.csv`
+- `output/jupyter-notebook/instance_validation_analysis_artifacts/release_consistency_report.csv`
+- `output/jupyter-notebook/instance_validation_analysis_artifacts/instance_space_features.csv`
+- `output/jupyter-notebook/instance_validation_analysis_artifacts/instance_space_pairs.csv`
+- `output/jupyter-notebook/instance_validation_analysis_artifacts/instance_space_summary.csv`
 - `output/jupyter-notebook/instance_validation_analysis_artifacts/audit_reconciliation.csv`
 - `output/jupyter-notebook/instance_validation_analysis_artifacts/event_report.csv`
 - `output/jupyter-notebook/instance_validation_analysis_artifacts/due_margin_summary.csv`
@@ -167,6 +179,8 @@ Imagens principais:
 ![Observational layer behavior](output/jupyter-notebook/instance_validation_analysis_artifacts/observational_layer_behavior.png)
 
 ![Operational performance and regime sanity](output/jupyter-notebook/instance_validation_analysis_artifacts/operational_performance_and_regime_sanity.png)
+
+![Instance-space coverage](output/jupyter-notebook/instance_validation_analysis_artifacts/instance_space_coverage.png)
 
 ![FIFO schedule drilldown for GO_XS_DISRUPTED_01](output/jupyter-notebook/instance_validation_analysis_artifacts/go_xs_disrupted_01_fifo_schedule.png)
 

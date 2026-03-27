@@ -14,6 +14,7 @@
 # - validação estrutural e reconciliação dos audits
 # - comportamento da camada observacional
 # - sanidade operacional por regime
+# - cobertura do espaço de instâncias e checagem de redundância
 # - drilldown visual de uma instância concreta
 #
 # **Modo de uso**
@@ -87,7 +88,8 @@ SCALE_ORDER = repl.SCALE_ORDER
 # 1. Carregar o backend analítico compartilhado e expor os objetos principais no notebook.
 # 2. Validar integridade estrutural, reconciliar audits e inspecionar métricas agregadas do release.
 # 3. Verificar se a camada observacional reduz sobre-determinismo sem quebrar a semântica operacional.
-# 4. Fazer drilldown visual em uma instância para checagem manual do baseline FIFO.
+# 4. Confirmar que o release cobre regiões distintas do espaço de instâncias e não colapsa em casos quase redundantes.
+# 5. Fazer drilldown visual em uma instância para checagem manual do baseline FIFO.
 
 # %%
 # Bootstrap the notebook workspace from the shared REPL backend
@@ -122,7 +124,11 @@ event_report = repl.EVENT_REPORT.copy()
 audit_reconciliation = repl.AUDIT_RECONCILIATION.copy()
 regime_checks = repl.REGIME_CHECKS.copy()
 fifo_schema_report = repl.FIFO_SCHEMA_REPORT.copy()
+release_consistency_report = repl.RELEASE_CONSISTENCY_REPORT.copy()
 utilization = repl.UTILIZATION.copy()
+instance_space_features = repl.INSTANCE_SPACE_FEATURES.copy()
+instance_space_pairs = repl.INSTANCE_SPACE_PAIRS.copy()
+instance_space_summary = repl.INSTANCE_SPACE_SUMMARY.copy()
 diagnostics = repl.DIAGNOSTICS.copy()
 unload = repl.UNLOAD.copy()
 
@@ -151,6 +157,7 @@ display(
 - `repl.plot_observational_layer()`
 - `repl.plot_congestion_diagnostics()`
 - `repl.plot_operational_sanity()`
+- `repl.plot_instance_space_coverage()`
 - `repl.plot_instance_drilldown("GO_XS_DISRUPTED_01")`
 """
     )
@@ -165,9 +172,7 @@ noise_manifest_summary = pd.DataFrame(
             "official_dataset_role": manifest["official_dataset_role"],
             "noise_model_id": observed_noise_manifest.get("model_id"),
             "noise_global_seed": observed_noise_manifest.get("global_seed"),
-            "parent_dataset_version": observed_noise_manifest.get(
-                "parent_dataset_version"
-            ),
+            "parent_dataset_version": manifest.get("parent_dataset_version"),
             "generator_model": observed_noise_manifest.get(
                 "generator_model", "ChatGPT 5.4 PRO"
             ),
@@ -177,7 +182,20 @@ noise_manifest_summary = pd.DataFrame(
 
 display(params.head())
 display(noise_manifest_summary)
+display(release_consistency_report)
 display(pd.DataFrame([g2milp_contract]).iloc[:, :8])
+
+release_consistency_report.to_csv(
+    ARTIFACT_DIR / "release_consistency_report.csv", index=False
+)
+
+# %% [markdown]
+# **Como ler as tabelas acima**
+#
+# - `noise_manifest_summary` resume a versão oficial, a linhagem e o modelo gerador da camada observacional
+# - `release_consistency_report` formaliza a governança do release: `manifest.json` raiz, `params.json` das instâncias e `observed_noise_manifest.json`
+# - para publicação, o desejável é que todos os checks dessa tabela estejam em `pass = True`
+# - no release oficial atual, isso de fato ocorre; em particular, não há divergência entre a `dataset_version` do `manifest.json` raiz e a `dataset_version` declarada nos `params.json`
 
 # %% [markdown]
 # ## Inventory and structural context
@@ -308,6 +326,48 @@ plt.show()
 # - o gráfico inferior direito ajuda a ver quais famílias de máquina absorvem mais pressão em cada regime
 
 # %% [markdown]
+# ## Instance-space coverage and redundancy screening
+#
+# Além de ser íntegro e executável, o release precisa cobrir regiões distintas do problema.
+# Esta seção responde:
+#
+# - se há duplicatas exatas no nível de instância
+# - se há casos "duplicate-like" em um espaço multivariado de features estruturais e operacionais
+# - quão dispersas as instâncias estão quando projetadas em 2D
+# - quais pares são os mais próximos dentro do release
+
+# %%
+display(instance_space_summary)
+display(
+    instance_space_features[
+        [
+            "instance_id",
+            "scale_code",
+            "regime_code",
+            "nearest_neighbor_instance_id",
+            "nearest_neighbor_distance",
+            "duplicate_like_candidate",
+        ]
+    ].sort_values("nearest_neighbor_distance")
+)
+display(instance_space_pairs.head(12))
+
+fig = repl.plot_instance_space_coverage(ctx=NOTEBOOK_CTX, save=True)
+plt.show()
+
+instance_space_features.to_csv(ARTIFACT_DIR / "instance_space_features.csv", index=False)
+instance_space_pairs.to_csv(ARTIFACT_DIR / "instance_space_pairs.csv", index=False)
+instance_space_summary.to_csv(ARTIFACT_DIR / "instance_space_summary.csv", index=False)
+
+# %% [markdown]
+# **Como ler a figura acima**
+#
+# - painel esquerdo: a PCA resume o release em 2 dimensões; espalhamento visível indica que as instâncias não colapsam em um bloco quase idêntico
+# - painel central: cada barra é a distância ao vizinho mais próximo; quanto mais longe da linha tracejada, menor a suspeita de redundância
+# - painel direito: mostra os pares mais próximos do release; se algum caísse abaixo do limiar, ele apareceria como candidato `duplicate-like`
+# - o screening aqui é deliberadamente conservador: ele combina `core_instance_digest`, features padronizadas e distância ao vizinho mais próximo
+
+# %% [markdown]
 # ## Instance drilldown
 #
 # Um drilldown ajuda a validar visualmente se o baseline FIFO de uma instância concreta:
@@ -353,6 +413,7 @@ plt.show()
 # - os audits reconciliam os valores centrais
 # - os checks de regime são positivos para `mean_flow`, `p95_flow` e fila média
 # - o proxy médio de congestionamento é útil, mas não monotônico em todas as famílias
+# - o espaço de instâncias não contém duplicatas exatas nem candidatos `duplicate-like` sob o screening adotado
 # - a camada observacional reduz determinismo excessivo sem destruir semântica
 # - a base é forte o suficiente para servir como dataset pai de análises e futuras derivações com G2MILP
 
@@ -361,6 +422,7 @@ summary = {
     "dataset_version": manifest["dataset_version"],
     "instance_count": int(params["instance_id"].nunique()),
     "structural_pass_rate": float((structural_report["status"] == "PASS").mean()),
+    "release_consistency_checks_pass": bool(release_consistency_report["pass"].all()),
     "fifo_schema_checks_pass": bool(
         fifo_schema_report[
             [
@@ -386,6 +448,16 @@ summary = {
     "congestion_mean_regime_order_checks_pass": bool(
         regime_checks["mean_congestion_order_ok"].all()
     ),
+    "instance_space_exact_duplicate_checks_pass": bool(
+        instance_space_summary.loc[0, "exact_core_duplicate_count"] == 0
+        and instance_space_summary.loc[0, "exact_feature_duplicate_count"] == 0
+    ),
+    "instance_space_duplicate_like_checks_pass": bool(
+        instance_space_summary.loc[0, "duplicate_like_candidate_count"] == 0
+    ),
+    "instance_space_nearest_neighbor_distance_min": float(
+        instance_space_summary.loc[0, "nearest_neighbor_distance_min"]
+    ),
     "g2milp_role": manifest["official_dataset_role"],
 }
 summary_df = pd.DataFrame([summary])
@@ -397,6 +469,7 @@ summary_lines = [
     f"- Dataset version: `{summary['dataset_version']}`",
     f"- Instances: `{summary['instance_count']}`",
     f"- Structural pass rate: `{summary['structural_pass_rate']:.4f}`",
+    f"- Release consistency checks pass: `{summary['release_consistency_checks_pass']}`",
     f"- FIFO schema checks pass: `{summary['fifo_schema_checks_pass']}`",
     f"- Due audit match share: `{summary['due_audit_match_share']:.4f}`",
     f"- Proc audit match share: `{summary['proc_audit_match_share']:.4f}`",
@@ -405,6 +478,9 @@ summary_lines = [
     f"- Flow regime checks pass: `{summary['flow_regime_order_checks_pass']}`",
     f"- Mean queue regime checks pass: `{summary['queue_regime_order_checks_pass']}`",
     f"- Mean congestion regime checks pass: `{summary['congestion_mean_regime_order_checks_pass']}`",
+    f"- Instance-space exact duplicate checks pass: `{summary['instance_space_exact_duplicate_checks_pass']}`",
+    f"- Instance-space duplicate-like checks pass: `{summary['instance_space_duplicate_like_checks_pass']}`",
+    f"- Instance-space nearest-neighbor distance min: `{summary['instance_space_nearest_neighbor_distance_min']:.4f}`",
     f"- Official role: `{summary['g2milp_role']}`",
 ]
 summary_text = "\n".join(summary_lines)

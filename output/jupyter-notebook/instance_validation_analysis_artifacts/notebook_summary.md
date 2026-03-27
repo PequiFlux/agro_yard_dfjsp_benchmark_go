@@ -3,6 +3,7 @@
 - Dataset version: `1.1.0-observed`
 - Instances: `36`
 - Structural pass rate: `1.0000`
+- Release consistency checks pass: `True`
 - FIFO schema checks pass: `True`
 - Due audit match share: `1.0000`
 - Proc audit match share: `1.0000`
@@ -11,4 +12,7 @@
 - Flow regime checks pass: `True`
 - Mean queue regime checks pass: `True`
 - Mean congestion regime checks pass: `False`
+- Instance-space exact duplicate checks pass: `True`
+- Instance-space duplicate-like checks pass: `True`
+- Instance-space nearest-neighbor distance min: `2.3228`
 - Official role: `base_dataset_for_g2milp_instance_generation`
