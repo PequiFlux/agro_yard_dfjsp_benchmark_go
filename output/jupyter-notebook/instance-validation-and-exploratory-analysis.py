@@ -121,6 +121,7 @@ structural_report = repl.STRUCTURAL_REPORT.copy()
 event_report = repl.EVENT_REPORT.copy()
 audit_reconciliation = repl.AUDIT_RECONCILIATION.copy()
 regime_checks = repl.REGIME_CHECKS.copy()
+fifo_schema_report = repl.FIFO_SCHEMA_REPORT.copy()
 utilization = repl.UTILIZATION.copy()
 diagnostics = repl.DIAGNOSTICS.copy()
 unload = repl.UNLOAD.copy()
@@ -206,6 +207,7 @@ plt.show()
 #
 # Aqui reaplicamos o verificador estrutural do release e complementamos com:
 #
+# - executabilidade formal do baseline FIFO contra o schema
 # - consistência de eventos
 # - margem do prazo sobre o lower bound nominal
 # - reconciliação auditável entre arquivos centrais e CSVs de audit
@@ -214,6 +216,7 @@ plt.show()
 # The shared REPL backend already ships these reports with scale/regime context.
 
 display(structural_report.sort_values(["scale_code", "regime_code", "instance_id"]))
+display(fifo_schema_report.sort_values(["scale_code", "regime_code", "instance_id"]))
 display(event_report.sort_values(["scale_code", "regime_code", "instance_id"]))
 display(audit_reconciliation.sort_values(["scale_code", "regime_code", "instance_id"]))
 
@@ -231,6 +234,7 @@ fig = repl.plot_validation_overview(ctx=NOTEBOOK_CTX, save=True)
 plt.show()
 
 structural_report.to_csv(ARTIFACT_DIR / "structural_report.csv", index=False)
+fifo_schema_report.to_csv(ARTIFACT_DIR / "fifo_schema_report.csv", index=False)
 event_report.to_csv(ARTIFACT_DIR / "event_report.csv", index=False)
 audit_reconciliation.to_csv(ARTIFACT_DIR / "audit_reconciliation.csv", index=False)
 due_margin_summary.to_csv(ARTIFACT_DIR / "due_margin_summary.csv", index=False)
@@ -239,6 +243,7 @@ due_margin_summary.to_csv(ARTIFACT_DIR / "due_margin_summary.csv", index=False)
 # **Como ler a figura acima**
 #
 # - painel esquerdo: cada célula deve ficar em `PASS`; se aparecer número de issues, aquela família tem falhas estruturais
+# - a tabela `fifo_schema_report` formaliza a executabilidade do baseline FIFO: elegibilidade, `release_time`, precedência, overlap e downtime
 # - painel central: os dois bars precisam ficar em `100%`; qualquer queda indica quebra entre CSV central e CSV de audit
 # - painel direito: mostra quanta folga de prazo sobra acima do lower bound físico plausível
 
@@ -281,7 +286,9 @@ plt.show()
 #
 # A validação não depende só de integridade estrutural. Também interessa saber se:
 #
-# - `balanced < peak < disrupted` permanece verdadeiro
+# - `balanced < peak < disrupted` permanece verdadeiro para `mean_flow` e `p95_flow`
+# - a fila média também preserva monotonicidade
+# - o proxy médio de congestionamento não precisa ser monotônico em todas as famílias
 # - os tempos de fluxo e fila continuam coerentes com a escala do problema
 # - a utilização de recurso faz sentido por família de máquina
 
@@ -295,7 +302,8 @@ plt.show()
 # %% [markdown]
 # **Como ler a figura acima**
 #
-# - os heatmaps do topo validam a monotonicidade esperada: `balanced < peak < disrupted`
+# - os heatmaps do topo validam a monotonicidade esperada apenas para `flow`: `balanced < peak < disrupted`
+# - a tabela `regime_checks` separa formalmente os checks de `flow`, `queue` e `congestion`
 # - o boxplot inferior esquerdo mostra a distribuição de `flow_time` no nível de job
 # - o gráfico inferior direito ajuda a ver quais famílias de máquina absorvem mais pressão em cada regime
 
@@ -341,8 +349,10 @@ plt.show()
 # O notebook consolida uma leitura de qualidade do release oficial:
 #
 # - o release está estruturalmente íntegro
+# - o baseline FIFO é executável contra o schema nas `36` instâncias
 # - os audits reconciliam os valores centrais
-# - os regimes preservam a hierarquia operacional esperada
+# - os checks de regime são positivos para `mean_flow`, `p95_flow` e fila média
+# - o proxy médio de congestionamento é útil, mas não monotônico em todas as famílias
 # - a camada observacional reduz determinismo excessivo sem destruir semântica
 # - a base é forte o suficiente para servir como dataset pai de análises e futuras derivações com G2MILP
 
@@ -351,15 +361,30 @@ summary = {
     "dataset_version": manifest["dataset_version"],
     "instance_count": int(params["instance_id"].nunique()),
     "structural_pass_rate": float((structural_report["status"] == "PASS").mean()),
+    "fifo_schema_checks_pass": bool(
+        fifo_schema_report[
+            [
+                "eligible_assignment_ok",
+                "release_time_ok",
+                "precedence_ok",
+                "machine_overlap_ok",
+                "downtime_ok",
+            ]
+        ].all(axis=None)
+    ),
     "due_audit_match_share": float(audit_reconciliation["due_match_share"].mean()),
     "proc_audit_match_share": float(audit_reconciliation["proc_match_share"].mean()),
     "r2_due_slack_vs_priority": float(diagnostics["r2_due_slack_vs_priority"]),
     "r2_unload_proc_vs_load_machine_moisture": float(
         diagnostics["r2_unload_proc_vs_load_machine_moisture"]
     ),
-    "all_regime_order_checks_pass": bool(
+    "flow_regime_order_checks_pass": bool(
         regime_checks["mean_flow_order_ok"].all()
         and regime_checks["p95_flow_order_ok"].all()
+    ),
+    "queue_regime_order_checks_pass": bool(regime_checks["mean_queue_order_ok"].all()),
+    "congestion_mean_regime_order_checks_pass": bool(
+        regime_checks["mean_congestion_order_ok"].all()
     ),
     "g2milp_role": manifest["official_dataset_role"],
 }
@@ -372,11 +397,14 @@ summary_lines = [
     f"- Dataset version: `{summary['dataset_version']}`",
     f"- Instances: `{summary['instance_count']}`",
     f"- Structural pass rate: `{summary['structural_pass_rate']:.4f}`",
+    f"- FIFO schema checks pass: `{summary['fifo_schema_checks_pass']}`",
     f"- Due audit match share: `{summary['due_audit_match_share']:.4f}`",
     f"- Proc audit match share: `{summary['proc_audit_match_share']:.4f}`",
     f"- R2 due slack vs priority: `{summary['r2_due_slack_vs_priority']:.4f}`",
     f"- R2 unload proc vs load+machine+moisture: `{summary['r2_unload_proc_vs_load_machine_moisture']:.4f}`",
-    f"- Regime ordering checks all pass: `{summary['all_regime_order_checks_pass']}`",
+    f"- Flow regime checks pass: `{summary['flow_regime_order_checks_pass']}`",
+    f"- Mean queue regime checks pass: `{summary['queue_regime_order_checks_pass']}`",
+    f"- Mean congestion regime checks pass: `{summary['congestion_mean_regime_order_checks_pass']}`",
     f"- Official role: `{summary['g2milp_role']}`",
 ]
 summary_text = "\n".join(summary_lines)

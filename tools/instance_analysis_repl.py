@@ -23,6 +23,7 @@ After the session starts, the main loaded objects are available as globals:
     EVENT_REPORT
     AUDIT_RECONCILIATION
     REGIME_CHECKS
+    FIFO_SCHEMA_REPORT
     UTILIZATION
     DIAGNOSTICS
 
@@ -174,28 +175,117 @@ def build_audit_reconciliation(jobs: pd.DataFrame, eligible: pd.DataFrame, due_a
     return due_summary.merge(proc_summary, on="instance_id", how="outer")
 
 
-def build_regime_order_checks(family_summary: pd.DataFrame) -> pd.DataFrame:
+def build_regime_behavior_checks(
+    family_summary: pd.DataFrame,
+    job_metrics: pd.DataFrame,
+    jobs_enriched: pd.DataFrame,
+) -> pd.DataFrame:
     rows = []
+    queue_summary = job_metrics.groupby(["scale_code", "regime_code"], as_index=False)["queue_time_min"].mean()
+    congestion_summary = jobs_enriched.groupby(["scale_code", "regime_code"], as_index=False)["arrival_congestion_score"].mean()
     for scale_code, group in family_summary.groupby("scale_code"):
-        group = group.set_index("regime_code")
+        flow_group = group.set_index("regime_code")
+        queue_group = queue_summary[queue_summary["scale_code"] == scale_code].set_index("regime_code")
+        congestion_group = congestion_summary[congestion_summary["scale_code"] == scale_code].set_index("regime_code")
         mean_order = (
-            group.loc["balanced", "avg_fifo_mean_flow_min"]
-            < group.loc["peak", "avg_fifo_mean_flow_min"]
-            < group.loc["disrupted", "avg_fifo_mean_flow_min"]
+            flow_group.loc["balanced", "avg_fifo_mean_flow_min"]
+            < flow_group.loc["peak", "avg_fifo_mean_flow_min"]
+            < flow_group.loc["disrupted", "avg_fifo_mean_flow_min"]
         )
         p95_order = (
-            group.loc["balanced", "avg_fifo_p95_flow_min"]
-            < group.loc["peak", "avg_fifo_p95_flow_min"]
-            < group.loc["disrupted", "avg_fifo_p95_flow_min"]
+            flow_group.loc["balanced", "avg_fifo_p95_flow_min"]
+            < flow_group.loc["peak", "avg_fifo_p95_flow_min"]
+            < flow_group.loc["disrupted", "avg_fifo_p95_flow_min"]
+        )
+        mean_queue_order = (
+            queue_group.loc["balanced", "queue_time_min"]
+            < queue_group.loc["peak", "queue_time_min"]
+            < queue_group.loc["disrupted", "queue_time_min"]
+        )
+        congestion_mean_order = (
+            congestion_group.loc["balanced", "arrival_congestion_score"]
+            < congestion_group.loc["peak", "arrival_congestion_score"]
+            < congestion_group.loc["disrupted", "arrival_congestion_score"]
         )
         rows.append(
             {
                 "scale_code": scale_code,
                 "mean_flow_order_ok": bool(mean_order),
                 "p95_flow_order_ok": bool(p95_order),
+                "mean_queue_order_ok": bool(mean_queue_order),
+                "mean_congestion_order_ok": bool(congestion_mean_order),
             }
         )
     return pd.DataFrame(rows).sort_values("scale_code")
+
+
+def build_fifo_schema_report(
+    operations: pd.DataFrame,
+    eligible: pd.DataFrame,
+    precedences: pd.DataFrame,
+    schedule: pd.DataFrame,
+    downtimes: pd.DataFrame,
+) -> pd.DataFrame:
+    rows = []
+    for instance_id in sorted(schedule["instance_id"].unique()):
+        ops_g = operations[operations["instance_id"] == instance_id].copy()
+        elig_g = eligible[eligible["instance_id"] == instance_id].copy()
+        prec_g = precedences[precedences["instance_id"] == instance_id].copy()
+        sched_g = schedule[schedule["instance_id"] == instance_id].copy().sort_values(["machine_id", "start_min", "end_min"])
+        downs_g = downtimes[downtimes["instance_id"] == instance_id].copy()
+
+        eligible_keys = set(map(tuple, elig_g[["job_id", "op_seq", "machine_id"]].drop_duplicates().itertuples(index=False, name=None)))
+        sched_keys = list(map(tuple, sched_g[["job_id", "op_seq", "machine_id"]].itertuples(index=False, name=None)))
+        ineligible_assignments = sum(1 for key in sched_keys if key not in eligible_keys)
+
+        sched_ops = sched_g.merge(
+            ops_g[["job_id", "op_seq", "release_time_min"]],
+            on=["job_id", "op_seq"],
+            how="left",
+        )
+        release_time_violations = int((sched_ops["start_min"] < sched_ops["release_time_min"]).sum())
+
+        sched_index = sched_g.set_index(["job_id", "op_seq"])
+        precedence_violations = 0
+        for row in prec_g.itertuples(index=False):
+            pred_end = int(sched_index.loc[(row.job_id, row.pred_op_seq), "end_min"])
+            succ_start = int(sched_index.loc[(row.job_id, row.succ_op_seq), "start_min"])
+            if succ_start < pred_end + int(row.min_lag_min):
+                precedence_violations += 1
+
+        overlap_violations = 0
+        for _, machine_sched in sched_g.groupby("machine_id"):
+            prev_end = None
+            for row in machine_sched.itertuples(index=False):
+                if prev_end is not None and int(row.start_min) < prev_end:
+                    overlap_violations += 1
+                prev_end = int(row.end_min)
+
+        downtime_violations = 0
+        downtime_groups = {machine_id: frame for machine_id, frame in downs_g.groupby("machine_id")}
+        for row in sched_g.itertuples(index=False):
+            machine_downs = downtime_groups.get(row.machine_id)
+            if machine_downs is None:
+                continue
+            if ((machine_downs["start_min"] < row.end_min) & (machine_downs["end_min"] > row.start_min)).any():
+                downtime_violations += 1
+
+        rows.append(
+            {
+                "instance_id": instance_id,
+                "eligible_assignment_ok": ineligible_assignments == 0,
+                "release_time_ok": release_time_violations == 0,
+                "precedence_ok": precedence_violations == 0,
+                "machine_overlap_ok": overlap_violations == 0,
+                "downtime_ok": downtime_violations == 0,
+                "ineligible_assignments": ineligible_assignments,
+                "release_time_violations": release_time_violations,
+                "precedence_violations": precedence_violations,
+                "machine_overlap_violations": overlap_violations,
+                "downtime_violations": downtime_violations,
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def machine_utilization_frame(schedule: pd.DataFrame, machines: pd.DataFrame, params: pd.DataFrame) -> pd.DataFrame:
@@ -332,7 +422,12 @@ def load_context(root: Path = REPO_ROOT) -> dict[str, Any]:
     audit_reconciliation = build_audit_reconciliation(jobs, eligible, due_audit, proc_audit).merge(
         params[["instance_id", "scale_code", "regime_code"]], on="instance_id", how="left"
     )
-    regime_checks = build_regime_order_checks(family_summary)
+    regime_checks = build_regime_behavior_checks(family_summary, job_metrics, jobs_enriched)
+    fifo_schema_report = build_fifo_schema_report(operations, eligible, precedences, schedule, downtimes).merge(
+        params[["instance_id", "scale_code", "regime_code"]],
+        on="instance_id",
+        how="left",
+    )
     utilization = machine_utilization_frame(schedule, machines, params)
     diagnostics = release_diagnostics(root)
 
@@ -365,7 +460,20 @@ def load_context(root: Path = REPO_ROOT) -> dict[str, Any]:
         "proc_audit_match_share": float(audit_reconciliation["proc_match_share"].mean()),
         "r2_due_slack_vs_priority": float(diagnostics["r2_due_slack_vs_priority"]),
         "r2_unload_proc_vs_load_machine_moisture": float(diagnostics["r2_unload_proc_vs_load_machine_moisture"]),
-        "all_regime_order_checks_pass": bool(regime_checks["mean_flow_order_ok"].all() and regime_checks["p95_flow_order_ok"].all()),
+        "fifo_schema_checks_pass": bool(
+            fifo_schema_report[
+                [
+                    "eligible_assignment_ok",
+                    "release_time_ok",
+                    "precedence_ok",
+                    "machine_overlap_ok",
+                    "downtime_ok",
+                ]
+            ].all(axis=None)
+        ),
+        "flow_regime_order_checks_pass": bool(regime_checks["mean_flow_order_ok"].all() and regime_checks["p95_flow_order_ok"].all()),
+        "queue_regime_order_checks_pass": bool(regime_checks["mean_queue_order_ok"].all()),
+        "congestion_mean_regime_order_checks_pass": bool(regime_checks["mean_congestion_order_ok"].all()),
         "g2milp_role": manifest.get("official_dataset_role", ""),
     }
 
@@ -396,6 +504,7 @@ def load_context(root: Path = REPO_ROOT) -> dict[str, Any]:
         "event_report": event_report,
         "audit_reconciliation": audit_reconciliation,
         "regime_checks": regime_checks,
+        "fifo_schema_report": fifo_schema_report,
         "utilization": utilization,
         "diagnostics": diagnostics,
         "unload": unload,
@@ -430,6 +539,7 @@ STRUCTURAL_REPORT = CTX["structural_report"]
 EVENT_REPORT = CTX["event_report"]
 AUDIT_RECONCILIATION = CTX["audit_reconciliation"]
 REGIME_CHECKS = CTX["regime_checks"]
+FIFO_SCHEMA_REPORT = CTX["fifo_schema_report"]
 UTILIZATION = CTX["utilization"]
 DIAGNOSTICS = CTX["diagnostics"]
 UNLOAD = CTX["unload"]
@@ -464,6 +574,7 @@ def validation_tables(ctx: dict[str, Any] | None = None) -> dict[str, pd.DataFra
         "structural_report": ctx["structural_report"].sort_values(["scale_code", "regime_code", "instance_id"]),
         "event_report": ctx["event_report"].sort_values(["scale_code", "regime_code", "instance_id"]),
         "audit_reconciliation": ctx["audit_reconciliation"].sort_values(["scale_code", "regime_code", "instance_id"]),
+        "fifo_schema_report": ctx["fifo_schema_report"].sort_values(["scale_code", "regime_code", "instance_id"]),
         "due_margin_summary": due_margin_summary,
     }
 
@@ -880,6 +991,7 @@ def export_all_artifacts(ctx: dict[str, Any] | None = None, instance_id: str = "
     validation_tables(ctx)["structural_report"].to_csv(ctx["artifact_dir"] / "structural_report.csv", index=False)
     validation_tables(ctx)["event_report"].to_csv(ctx["artifact_dir"] / "event_report.csv", index=False)
     validation_tables(ctx)["audit_reconciliation"].to_csv(ctx["artifact_dir"] / "audit_reconciliation.csv", index=False)
+    validation_tables(ctx)["fifo_schema_report"].to_csv(ctx["artifact_dir"] / "fifo_schema_report.csv", index=False)
     validation_tables(ctx)["due_margin_summary"].to_csv(ctx["artifact_dir"] / "due_margin_summary.csv", index=False)
     pd.DataFrame([ctx["summary"]]).to_csv(ctx["artifact_dir"] / "repl_summary.csv", index=False)
     plot_inventory_overview(ctx, save=True)

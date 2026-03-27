@@ -34,16 +34,16 @@ Em outras palavras: o problema continua sendo o mesmo benchmark D-FJSP; o que mu
 
 ### 1. Prazo observado por job
 
-$$
+```math
 \operatorname{slack}^{obs}_j =
 b(\operatorname{priority}_j)
 + f(\operatorname{appointment}_j,\operatorname{commodity}_j,\operatorname{moisture}_j,\operatorname{shift}_j,\operatorname{regime})
 + u_{\operatorname{inst}}
 + u_{\operatorname{shift}(j)}
 + \varepsilon_j
-$$
+```
 
-$$
+```math
 \operatorname{due}^{obs}_j =
 \operatorname{arrival}_j +
 \operatorname{clip}\!\left(
@@ -51,20 +51,20 @@ $$
 LB_j + 18,\,
 b(\operatorname{priority}_j) + 120
 \right)
-$$
+```
 
 Onde:
 
-- $b(\operatorname{priority}_j)$ é a folga base por classe de prioridade
-- $f(\cdot)$ agrega efeitos fixos pequenos e interpretáveis
-- $u_{\operatorname{inst}}$ é um efeito latente da instância
-- $u_{\operatorname{shift}(j)}$ é um efeito latente do turno
-- $\varepsilon_j$ é ruído Student-t com escala dependente do regime
-- $LB_j$ é o lower bound físico plausível do job, calculado como a soma dos menores tempos elegíveis de suas quatro operações
+- $`b(\operatorname{priority}_j)`$ é a folga base por classe de prioridade
+- $`f(\cdot)`$ agrega efeitos fixos pequenos e interpretáveis
+- $`u_{\operatorname{inst}}`$ é um efeito latente da instância
+- $`u_{\operatorname{shift}(j)}`$ é um efeito latente do turno
+- $`\varepsilon_j`$ é ruído Student-t com escala dependente do regime
+- $`LB_j`$ é o lower bound físico plausível do job, calculado como a soma dos menores tempos elegíveis de suas quatro operações
 
 ### 2. Tempo observado por tripla `(job, op, machine)`
 
-$$
+```math
 p^{obs}_{jom} =
 \max\!\left(
 p^{\min}_{\operatorname{stage}},
@@ -83,20 +83,20 @@ u_m
 + \operatorname{pause}_{jom}
 \right)
 \right)
-$$
+```
 
 Onde:
 
-- $p^{nom}_{jom}$ é o tempo nominal original
-- $u_m$ é um efeito persistente da máquina
-- $u_{\operatorname{shift}}$ é um efeito do turno
-- $u_{\operatorname{stage,inst}}$ é um efeito latente do estágio na instância
-- $u_{\operatorname{regime}}$ captura o ambiente `balanced / peak / disrupted`
-- $g_j$ é o proxy contínuo de congestionamento derivado das chegadas
-- $u_{\operatorname{commodity}}$ e $u_{\operatorname{moisture}}$ são ajustes semânticos pequenos
-- $\varepsilon_{jom}$ é ruído idiossincrático
-- $\operatorname{pause}_{jom}$ representa microparadas ocasionais
-- $p^{\min}_{\operatorname{stage}}$ impõe um piso por estágio
+- $`p^{nom}_{jom}`$ é o tempo nominal original
+- $`u_m`$ é um efeito persistente da máquina
+- $`u_{\operatorname{shift}}`$ é um efeito do turno
+- $`u_{\operatorname{stage,inst}}`$ é um efeito latente do estágio na instância
+- $`u_{\operatorname{regime}}`$ captura o ambiente `balanced / peak / disrupted`
+- $`g_j`$ é o proxy contínuo de congestionamento derivado das chegadas
+- $`u_{\operatorname{commodity}}`$ e $`u_{\operatorname{moisture}}`$ são ajustes semânticos pequenos
+- $`\varepsilon_{jom}`$ é ruído idiossincrático
+- $`\operatorname{pause}_{jom}`$ representa microparadas ocasionais
+- $`p^{\min}_{\operatorname{stage}}`$ impõe um piso por estágio
 
 ## Como validamos
 
@@ -163,16 +163,27 @@ O notebook `output/jupyter-notebook/instance-validation-and-exploratory-analysis
 Resumo dos resultados agregados:
 
 - `structural_pass_rate = 1.0000`
+- `fifo_schema_checks_pass = True`
 - `due_audit_match_share = 1.0000`
 - `proc_audit_match_share = 1.0000`
-- `all_regime_order_checks_pass = True`
+- `flow_regime_order_checks_pass = True`
+- `queue_regime_order_checks_pass = True`
+- `congestion_mean_regime_order_checks_pass = False`
 - soma total de mismatches em eventos: `0` para `JOB_VISIBLE`, `JOB_ARRIVAL`, `MACHINE_DOWN` e `MACHINE_UP`
 - margem observada sobre o lower bound físico no resumo por escala/regime: de `124` a `353` minutos
+
+Leitura correta desses checks:
+
+- `fifo_schema_checks_pass = True` significa que o baseline FIFO respeita elegibilidade, `release_time`, precedência, ausência de overlap e ausência de execução atravessando downtime nas `36` instâncias
+- `flow_regime_order_checks_pass = True` cobre apenas a monotonicidade de `avg_fifo_mean_flow_min` e `avg_fifo_p95_flow_min`
+- `queue_regime_order_checks_pass = True` indica que a fila média também preserva `balanced < peak < disrupted`
+- `congestion_mean_regime_order_checks_pass = False` indica que a média do proxy `arrival_congestion_score` não é monotônica em todas as famílias; isso não invalida o benchmark, porque esse proxy é auxiliar e não a métrica-alvo do problema
 
 Artefatos tabulares principais:
 
 - `output/jupyter-notebook/instance_validation_analysis_artifacts/notebook_summary.csv`
 - `output/jupyter-notebook/instance_validation_analysis_artifacts/structural_report.csv`
+- `output/jupyter-notebook/instance_validation_analysis_artifacts/fifo_schema_report.csv`
 - `output/jupyter-notebook/instance_validation_analysis_artifacts/audit_reconciliation.csv`
 - `output/jupyter-notebook/instance_validation_analysis_artifacts/event_report.csv`
 - `output/jupyter-notebook/instance_validation_analysis_artifacts/due_margin_summary.csv`
