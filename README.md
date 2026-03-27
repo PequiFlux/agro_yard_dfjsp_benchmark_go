@@ -34,69 +34,41 @@ Em outras palavras: o problema continua sendo o mesmo benchmark D-FJSP; o que mu
 
 ### 1. Prazo observado por job
 
-```math
-\operatorname{slack}^{obs}_j =
-b(\operatorname{priority}_j)
-+ f(\operatorname{appointment}_j,\operatorname{commodity}_j,\operatorname{moisture}_j,\operatorname{shift}_j,\operatorname{regime})
-+ u_{\operatorname{inst}}
-+ u_{\operatorname{shift}(j)}
-+ \varepsilon_j
-```
+$$
+\mathrm{slack}^{obs}_j = b(\mathrm{priority}_j) + f(\mathrm{appointment}_j,\mathrm{commodity}_j,\mathrm{moisture}_j,\mathrm{shift}_j,\mathrm{regime}) + u_{\mathrm{inst}} + u_{\mathrm{shift}(j)} + \varepsilon_j
+$$
 
-```math
-\operatorname{due}^{obs}_j =
-\operatorname{arrival}_j +
-\operatorname{clip}\!\left(
-\operatorname{slack}^{obs}_j,\,
-LB_j + 18,\,
-b(\operatorname{priority}_j) + 120
-\right)
-```
+$$
+\mathrm{due}^{obs}_j = \mathrm{arrival}_j + \mathrm{clip}\!\left(\mathrm{slack}^{obs}_j,\, LB_j + 18,\, b(\mathrm{priority}_j) + 120\right)
+$$
 
 Onde:
 
-- $`b(\operatorname{priority}_j)`$ é a folga base por classe de prioridade
-- $`f(\cdot)`$ agrega efeitos fixos pequenos e interpretáveis
-- $`u_{\operatorname{inst}}`$ é um efeito latente da instância
-- $`u_{\operatorname{shift}(j)}`$ é um efeito latente do turno
-- $`\varepsilon_j`$ é ruído Student-t com escala dependente do regime
-- $`LB_j`$ é o lower bound físico plausível do job, calculado como a soma dos menores tempos elegíveis de suas quatro operações
+- $b(\mathrm{priority}_j)$ é a folga base por classe de prioridade
+- $f(\cdot)$ agrega efeitos fixos pequenos e interpretáveis
+- $u_{\mathrm{inst}}$ é um efeito latente da instância
+- $u_{\mathrm{shift}(j)}$ é um efeito latente do turno
+- $\varepsilon_j$ é ruído Student-t com escala dependente do regime
+- $LB_j$ é o lower bound físico plausível do job, calculado como a soma dos menores tempos elegíveis de suas quatro operações
 
 ### 2. Tempo observado por tripla `(job, op, machine)`
 
-```math
-p^{obs}_{jom} =
-\max\!\left(
-p^{\min}_{\operatorname{stage}},
-\operatorname{round}\!\left(
-p^{nom}_{jom}\cdot
-\exp\!\left(
-u_m
-+ u_{\operatorname{shift}}
-+ u_{\operatorname{stage,inst}}
-+ u_{\operatorname{regime}}
-+ \beta_{\operatorname{stage}}\, g_j
-+ u_{\operatorname{commodity}}
-+ u_{\operatorname{moisture}}
-+ \varepsilon_{jom}
-\right)
-+ \operatorname{pause}_{jom}
-\right)
-\right)
-```
+$$
+p^{obs}_{jom} = \max\!\left( p^{\min}_{\mathrm{stage}}, \mathrm{round}\!\left( p^{nom}_{jom} \cdot \exp\!\left( u_m + u_{\mathrm{shift}} + u_{\mathrm{stage,inst}} + u_{\mathrm{regime}} + \beta_{\mathrm{stage}} \, g_j + u_{\mathrm{commodity}} + u_{\mathrm{moisture}} + \varepsilon_{jom} \right) + \mathrm{pause}_{jom} \right) \right)
+$$
 
 Onde:
 
-- $`p^{nom}_{jom}`$ é o tempo nominal original
-- $`u_m`$ é um efeito persistente da máquina
-- $`u_{\operatorname{shift}}`$ é um efeito do turno
-- $`u_{\operatorname{stage,inst}}`$ é um efeito latente do estágio na instância
-- $`u_{\operatorname{regime}}`$ captura o ambiente `balanced / peak / disrupted`
-- $`g_j`$ é o proxy contínuo de congestionamento derivado das chegadas
-- $`u_{\operatorname{commodity}}`$ e $`u_{\operatorname{moisture}}`$ são ajustes semânticos pequenos
-- $`\varepsilon_{jom}`$ é ruído idiossincrático
-- $`\operatorname{pause}_{jom}`$ representa microparadas ocasionais
-- $`p^{\min}_{\operatorname{stage}}`$ impõe um piso por estágio
+- $p^{nom}_{jom}$ é o tempo nominal original
+- $u_m$ é um efeito persistente da máquina
+- $u_{\mathrm{shift}}$ é um efeito do turno
+- $u_{\mathrm{stage,inst}}$ é um efeito latente do estágio na instância
+- $u_{\mathrm{regime}}$ captura o ambiente `balanced / peak / disrupted`
+- $g_j$ é o proxy contínuo de congestionamento derivado das chegadas
+- $u_{\mathrm{commodity}}$ e $u_{\mathrm{moisture}}$ são ajustes semânticos pequenos
+- $\varepsilon_{jom}$ é ruído idiossincrático
+- $\mathrm{pause}_{jom}$ representa microparadas ocasionais
+- $p^{\min}_{\mathrm{stage}}$ impõe um piso por estágio
 
 ## Como validamos
 
