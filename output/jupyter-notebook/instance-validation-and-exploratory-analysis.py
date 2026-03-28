@@ -599,7 +599,7 @@ relational_plot = relational_consistency_summary.copy()
 relational_plot["check_label"] = relational_plot["check_name"].map(relational_label_map).fillna(relational_plot["check_name"])
 relational_plot = relational_plot.sort_values(["failed_instance_count", "check_label"], ascending=[False, True]).reset_index(drop=True)
 
-fig, axes = plt.subplots(1, 2, figsize=(17, 6.4))
+fig, axes = plt.subplots(1, 2, figsize=(16.4, 6.2), sharey=True, gridspec_kw={"width_ratios": [1.05, 1.0]})
 sns.barplot(
     data=relational_plot,
     y="check_label",
@@ -615,6 +615,7 @@ axes[0].set_title("Pass rate dos checks relacionais\nO desejável é 100% em tod
 axes[0].set_xlabel("Pass rate")
 axes[0].set_ylabel("")
 axes[0].xaxis.set_major_formatter(matplotlib.ticker.PercentFormatter(xmax=1.0))
+axes[0].grid(axis="x", alpha=0.25)
 for patch, value in zip(axes[0].patches, relational_plot["pass_rate"]):
     axes[0].text(
         min(value + 0.015, 1.0),
@@ -636,10 +637,12 @@ sns.barplot(
     palette="flare",
     ax=axes[1],
 )
-axes[1].set_title("Instâncias com falha por check\nO desejável é zero em todos", fontsize=13)
+axes[1].set_title("Falhas por check\nMeta: zero em todos", fontsize=13)
 axes[1].set_xlabel("Failed instances")
 axes[1].set_ylabel("")
 axes[1].set_xlim(0, max(1.0, float(relational_plot["failed_instance_count"].max()) + 0.75))
+axes[1].tick_params(axis="y", left=False, labelleft=False)
+axes[1].grid(axis="x", alpha=0.25)
 for patch, value in zip(axes[1].patches, relational_plot["failed_instance_count"]):
     axes[1].text(
         value + 0.05,
@@ -652,14 +655,15 @@ for patch, value in zip(axes[1].patches, relational_plot["failed_instance_count"
     )
 if relational_plot["failed_instance_count"].sum() == 0:
     axes[1].text(
-        0.5,
-        1.02,
-        "Todos os checks ficaram em zero falhas nas 36 instâncias.",
+        0.97,
+        0.97,
+        "36/36 instâncias\nsem falhas relacionais",
         transform=axes[1].transAxes,
-        ha="center",
-        va="bottom",
+        ha="right",
+        va="top",
         fontsize=10,
         color="#475569",
+        bbox={"facecolor": "white", "edgecolor": "#cbd5e1", "alpha": 0.95, "boxstyle": "round,pad=0.3"},
     )
 
 fig.suptitle("Consistência relacional do release", x=0.02, y=0.99, ha="left", fontsize=18, fontweight="bold")
