@@ -50,6 +50,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
+from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 from matplotlib.ticker import PercentFormatter
 
@@ -1389,7 +1390,12 @@ def plot_instance_space_coverage(ctx: dict[str, Any] | None = None, save: bool =
     knn_profile = ctx["instance_space_knn_profile"].copy()
     regime_composition = ctx["instance_space_knn_regime_composition"].copy()
 
-    fig, axes = plt.subplots(2, 2, figsize=(18, 12))
+    fig, axes = plt.subplots(
+        2,
+        2,
+        figsize=(17.4, 10.2),
+        gridspec_kw={"width_ratios": [1.0, 1.18], "height_ratios": [1.0, 1.03]},
+    )
     palette = {"balanced": "#2a9d8f", "peak": "#e9c46a", "disrupted": "#e76f51"}
     markers = {"XS": "o", "S": "s", "M": "D", "L": "^"}
 
@@ -1403,9 +1409,10 @@ def plot_instance_space_coverage(ctx: dict[str, Any] | None = None, save: bool =
         style_order=SCALE_ORDER,
         markers=markers,
         palette=palette,
-        s=110,
+        s=92,
         edgecolor="white",
         linewidth=0.8,
+        legend=False,
         ax=axes[0, 0],
     )
     axes[0, 0].set_title(
@@ -1414,9 +1421,57 @@ def plot_instance_space_coverage(ctx: dict[str, Any] | None = None, save: bool =
     )
     axes[0, 0].set_xlabel(f"PC1 ({summary['pca_pc1_explained_variance_ratio']:.1%} da variância)")
     axes[0, 0].set_ylabel(f"PC2 ({summary['pca_pc2_explained_variance_ratio']:.1%} da variância)")
-    handles, labels = axes[0, 0].get_legend_handles_labels()
-    if handles:
-        axes[0, 0].legend(handles, labels, title="Regime / escala", loc="best", frameon=True)
+    axes[0, 0].axhline(0, color="#cbd5e1", linewidth=0.9, zorder=0)
+    axes[0, 0].axvline(0, color="#cbd5e1", linewidth=0.9, zorder=0)
+    axes[0, 0].grid(alpha=0.28)
+    regime_handles = [
+        Line2D(
+            [0],
+            [0],
+            marker="o",
+            linestyle="",
+            markerfacecolor=palette[regime],
+            markeredgecolor="white",
+            markeredgewidth=0.8,
+            markersize=8,
+            label=regime,
+        )
+        for regime in REGIME_ORDER
+    ]
+    scale_handles = [
+        Line2D(
+            [0],
+            [0],
+            marker=markers[scale],
+            linestyle="",
+            color="#334155",
+            markerfacecolor="#94a3b8",
+            markeredgecolor="white",
+            markeredgewidth=0.8,
+            markersize=8,
+            label=scale,
+        )
+        for scale in SCALE_ORDER
+    ]
+    regime_legend = axes[0, 0].legend(
+        handles=regime_handles,
+        title="Regime",
+        loc="upper left",
+        frameon=True,
+        fontsize=10,
+        title_fontsize=10,
+        borderpad=0.6,
+    )
+    axes[0, 0].add_artist(regime_legend)
+    axes[0, 0].legend(
+        handles=scale_handles,
+        title="Escala",
+        loc="lower left",
+        frameon=True,
+        fontsize=10,
+        title_fontsize=10,
+        borderpad=0.6,
+    )
 
     sns.boxplot(
         data=knn_profile,
@@ -1425,6 +1480,8 @@ def plot_instance_space_coverage(ctx: dict[str, Any] | None = None, save: bool =
         hue="scale_code",
         hue_order=SCALE_ORDER,
         palette="Set2",
+        showfliers=False,
+        width=0.68,
         ax=axes[0, 1],
     )
     sns.stripplot(
@@ -1432,8 +1489,9 @@ def plot_instance_space_coverage(ctx: dict[str, Any] | None = None, save: bool =
         x="k",
         y="mean_knn_distance",
         color="#334155",
-        alpha=0.45,
-        size=4,
+        alpha=0.32,
+        size=3.2,
+        jitter=0.16,
         ax=axes[0, 1],
     )
     axes[0, 1].set_title(
@@ -1450,15 +1508,24 @@ def plot_instance_space_coverage(ctx: dict[str, Any] | None = None, save: bool =
         alpha=0.9,
     )
     axes[0, 1].text(
-        0.98,
-        0.08,
+        0.03,
+        0.04,
         f"limiar duplicate-like = {INSTANCE_SPACE_DUPLICATE_LIKE_THRESHOLD:.1f}",
         transform=axes[0, 1].transAxes,
-        ha="right",
+        ha="left",
         va="bottom",
         fontsize=10,
         color="#334155",
+        bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.85, "pad": 1.5},
     )
+    legend = axes[0, 1].get_legend()
+    if legend is not None:
+        legend.set_title("Escala")
+        legend.get_title().set_fontsize(10)
+        for text in legend.get_texts():
+            text.set_fontsize(10)
+        legend.get_frame().set_alpha(0.95)
+    axes[0, 1].grid(axis="y", alpha=0.25)
 
     regime_heatmap = (
         regime_composition[regime_composition["k"] == max(KNN_K_VALUES)]
@@ -1473,7 +1540,8 @@ def plot_instance_space_coverage(ctx: dict[str, Any] | None = None, save: bool =
         vmin=0.0,
         vmax=1.0,
         ax=axes[1, 0],
-        cbar_kws={"label": "Share médio entre os 5-NN"},
+        annot_kws={"fontsize": 11},
+        cbar_kws={"label": "Share médio entre os 5-NN", "shrink": 0.9},
     )
     axes[1, 0].set_title(
         "Pureza de vizinhança por regime (k=5)\nValores altos na diagonal indicam separação estrutural",
@@ -1487,16 +1555,16 @@ def plot_instance_space_coverage(ctx: dict[str, Any] | None = None, save: bool =
             label.replace("GO_", "")
             .replace("BALANCED", "BAL")
             .replace("DISRUPTED", "DISR")
+            .replace("_", "-")
         )
 
     closest_pairs["pair_label"] = closest_pairs["instance_a"].map(_short_instance_label) + " ↔ " + closest_pairs["instance_b"].map(_short_instance_label)
+    closest_pairs_plot = closest_pairs.sort_values("distance", ascending=True).copy()
     sns.barplot(
-        data=closest_pairs.sort_values("distance", ascending=True),
+        data=closest_pairs_plot,
         x="distance",
         y="pair_label",
-        hue="duplicate_like_under_threshold",
-        dodge=False,
-        palette={False: "#8ecae6", True: "#d62828"},
+        color="#8ecae6",
         ax=axes[1, 1],
     )
     axes[1, 1].axvline(
@@ -1509,34 +1577,43 @@ def plot_instance_space_coverage(ctx: dict[str, Any] | None = None, save: bool =
     axes[1, 1].set_title("Pares mais próximos do release\nNenhum par cai na zona de suspeita", fontsize=13)
     axes[1, 1].set_xlabel("Distância Euclidiana em features padronizadas")
     axes[1, 1].set_ylabel("")
-    if closest_pairs["duplicate_like_under_threshold"].nunique() > 1:
-        axes[1, 1].legend(title="Abaixo do limiar", loc="lower right", frameon=True)
-    else:
-        legend = axes[1, 1].get_legend()
-        if legend is not None:
-            legend.remove()
+    axes[1, 1].tick_params(axis="y", labelsize=10)
+    axes[1, 1].grid(axis="x", alpha=0.25)
+    x_max = max(float(closest_pairs_plot["distance"].max()) * 1.12, INSTANCE_SPACE_DUPLICATE_LIKE_THRESHOLD * 1.4)
+    axes[1, 1].set_xlim(0, x_max)
+    for patch, (_, row) in zip(axes[1, 1].patches, closest_pairs_plot.iterrows()):
         axes[1, 1].text(
-            0.98,
-            0.06,
-            "0 pares abaixo do limiar",
-            transform=axes[1, 1].transAxes,
-            ha="right",
-            va="bottom",
-            fontsize=10,
+            min(float(row["distance"]) + x_max * 0.018, x_max * 0.97),
+            patch.get_y() + patch.get_height() / 2,
+            f"{float(row['distance']):.2f}",
+            va="center",
+            ha="left",
+            fontsize=9.5,
             color="#334155",
         )
+    axes[1, 1].text(
+        0.98,
+        0.04,
+        "0 pares abaixo do limiar",
+        transform=axes[1, 1].transAxes,
+        ha="right",
+        va="bottom",
+        fontsize=10,
+        color="#334155",
+        bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.85, "pad": 1.5},
+    )
 
-    fig.suptitle("Cobertura do espaço de instâncias", x=0.02, y=1.03, ha="left", fontsize=18, fontweight="bold")
+    fig.suptitle("Cobertura do espaço de instâncias", x=0.02, y=0.98, ha="left", fontsize=18, fontweight="bold")
     fig.text(
         0.02,
-        0.95,
+        0.93,
         (
             "Leitura rápida: o release não tem duplicatas exatas e o vizinho mais próximo mais apertado ainda fica "
             f"em {summary['nearest_neighbor_distance_min']:.2f}, bem acima do limiar heurístico {INSTANCE_SPACE_DUPLICATE_LIKE_THRESHOLD:.1f}."
         ),
         fontsize=11,
     )
-    fig.tight_layout(rect=(0, 0, 1, 0.92))
+    fig.tight_layout(rect=(0, 0, 1, 0.9), h_pad=2.0, w_pad=2.0)
     if save:
         _ensure_artifact_dir(ctx)
         fig.savefig(ctx["artifact_dir"] / "instance_space_coverage.png", dpi=160, bbox_inches="tight")

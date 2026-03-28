@@ -188,7 +188,19 @@ Imagens principais:
 
 ![Operational performance and regime sanity](output/jupyter-notebook/instance_validation_analysis_artifacts/operational_performance_and_regime_sanity.png)
 
-![Instance-space coverage](output/jupyter-notebook/instance_validation_analysis_artifacts/instance_space_coverage.png)
+![PCA and kNN instance-space coverage](output/jupyter-notebook/instance_validation_analysis_artifacts/instance_space_coverage.png)
+
+A figura acima concentra a leitura de `PCA + kNN` do release:
+
+- o painel de `PCA` mostra cobertura global do espaço de instâncias
+- o perfil `kNN` mostra redundância local e separação entre vizinhos
+- os painéis inferiores ajudam a ver pureza por regime e os pares mais próximos do release
+
+![Relational consistency overview](output/jupyter-notebook/instance_validation_analysis_artifacts/relational_consistency_overview.png)
+
+![Formal shift experiments](output/jupyter-notebook/instance_validation_analysis_artifacts/formal_shift_experiments.png)
+
+![Tail and rare segments](output/jupyter-notebook/instance_validation_analysis_artifacts/tail_and_rare_segments.png)
 
 ![Solver-oriented smoke test](output/jupyter-notebook/instance_validation_analysis_artifacts/solver_oriented_smoke_test.png)
 

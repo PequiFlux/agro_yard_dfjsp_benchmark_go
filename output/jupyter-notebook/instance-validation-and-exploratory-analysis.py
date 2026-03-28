@@ -584,66 +584,92 @@ relational_consistency_report, relational_consistency_summary = build_relational
 display(relational_consistency_summary)
 display(relational_consistency_report.sort_values(["scale_code", "regime_code", "instance_id"]))
 
-fig, axes = plt.subplots(1, 2, figsize=(18, 5.8))
+relational_label_map = {
+    "every_operation_has_eligible_machine_ok": "eligible per op",
+    "fifo_has_one_row_per_operation_ok": "1 FIFO row per op",
+    "job_has_3_precedences_ok": "3 precedences per job",
+    "job_has_4_operations_ok": "4 operations per job",
+    "job_events_fk_ok": "job events FK",
+    "machine_events_fk_ok": "machine events FK",
+    "metrics_job_fk_ok": "metrics job FK",
+    "schedule_machine_fk_ok": "schedule machine FK",
+    "schedule_operation_fk_ok": "schedule op FK",
+}
+relational_plot = relational_consistency_summary.copy()
+relational_plot["check_label"] = relational_plot["check_name"].map(relational_label_map).fillna(relational_plot["check_name"])
+relational_plot = relational_plot.sort_values(["failed_instance_count", "check_label"], ascending=[False, True]).reset_index(drop=True)
+
+fig, axes = plt.subplots(1, 2, figsize=(17, 6.4))
 sns.barplot(
-    data=relational_consistency_summary,
-    x="check_name",
-    y="pass_rate",
-    hue="check_name",
+    data=relational_plot,
+    y="check_label",
+    x="pass_rate",
+    hue="check_label",
     dodge=False,
     legend=False,
     palette="crest",
     ax=axes[0],
 )
-axes[0].set_ylim(0, 1.05)
+axes[0].set_xlim(0, 1.02)
 axes[0].set_title("Pass rate dos checks relacionais\nO desejável é 100% em todos", fontsize=13)
-axes[0].set_xlabel("")
-axes[0].set_ylabel("Pass rate")
-axes[0].tick_params(axis="x", rotation=55)
-for patch, value in zip(axes[0].patches, relational_consistency_summary["pass_rate"]):
+axes[0].set_xlabel("Pass rate")
+axes[0].set_ylabel("")
+axes[0].xaxis.set_major_formatter(matplotlib.ticker.PercentFormatter(xmax=1.0))
+for patch, value in zip(axes[0].patches, relational_plot["pass_rate"]):
     axes[0].text(
-        patch.get_x() + patch.get_width() / 2,
-        value + 0.02,
+        min(value + 0.015, 1.0),
+        patch.get_y() + patch.get_height() / 2,
         f"{value:.0%}",
-        ha="center",
-        va="bottom",
+        ha="left",
+        va="center",
         fontsize=9,
         color="#334155",
     )
 
 sns.barplot(
-    data=relational_consistency_summary,
-    x="check_name",
-    y="failed_instance_count",
-    hue="check_name",
+    data=relational_plot,
+    y="check_label",
+    x="failed_instance_count",
+    hue="check_label",
     dodge=False,
     legend=False,
     palette="flare",
     ax=axes[1],
 )
 axes[1].set_title("Instâncias com falha por check\nO desejável é zero em todos", fontsize=13)
-axes[1].set_xlabel("")
-axes[1].set_ylabel("Instâncias com falha")
-axes[1].tick_params(axis="x", rotation=55)
-for patch, value in zip(axes[1].patches, relational_consistency_summary["failed_instance_count"]):
+axes[1].set_xlabel("Failed instances")
+axes[1].set_ylabel("")
+axes[1].set_xlim(0, max(1.0, float(relational_plot["failed_instance_count"].max()) + 0.75))
+for patch, value in zip(axes[1].patches, relational_plot["failed_instance_count"]):
     axes[1].text(
-        patch.get_x() + patch.get_width() / 2,
         value + 0.05,
+        patch.get_y() + patch.get_height() / 2,
         f"{int(value)}",
-        ha="center",
-        va="bottom",
+        ha="left",
+        va="center",
         fontsize=9,
         color="#334155",
     )
+if relational_plot["failed_instance_count"].sum() == 0:
+    axes[1].text(
+        0.5,
+        1.02,
+        "Todos os checks ficaram em zero falhas nas 36 instâncias.",
+        transform=axes[1].transAxes,
+        ha="center",
+        va="bottom",
+        fontsize=10,
+        color="#475569",
+    )
 
-fig.suptitle("Consistência relacional do release", x=0.02, y=1.03, ha="left", fontsize=18, fontweight="bold")
+fig.suptitle("Consistência relacional do release", x=0.02, y=0.99, ha="left", fontsize=18, fontweight="bold")
 fig.text(
     0.02,
-    0.95,
+    0.93,
     "Leitura rápida: além de válido como scheduling instance, o release preserva a coerência entre tabelas, chaves e cardinalidades centrais.",
     fontsize=11,
 )
-fig.tight_layout(rect=(0, 0, 1, 0.92))
+fig.tight_layout(rect=(0, 0, 1, 0.9))
 fig.savefig(ARTIFACT_DIR / "relational_consistency_overview.png", dpi=160, bbox_inches="tight")
 plt.show()
 
@@ -753,6 +779,14 @@ display(formal_shift_summary)
 display(job_density_segments.sort_values(["regime_code", "priority_class"]))
 display(proc_density_segments.sort_values(["regime_code", "stage_name"]))
 
+formal_shift_plot = formal_shift_summary.copy()
+formal_shift_plot["experiment_label"] = formal_shift_plot["experiment"].map(
+    {
+        "job_due_layer": "due layer",
+        "proc_time_layer": "proc_time layer",
+    }
+)
+
 job_delta_heatmap = (
     job_density_segments.pivot(index="priority_class", columns="regime_code", values="mean_prob_observed_delta")
     .reindex(index=repl.PRIORITY_ORDER, columns=REGIME_ORDER)
@@ -762,12 +796,17 @@ proc_delta_heatmap = (
     .reindex(index=STAGE_ORDER, columns=REGIME_ORDER)
 )
 
-fig, axes = plt.subplots(2, 2, figsize=(18, 12))
+fig, axes = plt.subplots(
+    2,
+    2,
+    figsize=(16, 9.2),
+    gridspec_kw={"height_ratios": [0.9, 1.1]},
+)
 sns.barplot(
-    data=formal_shift_summary,
-    x="experiment",
+    data=formal_shift_plot,
+    x="experiment_label",
     y="c2st_auc_mean",
-    hue="experiment",
+    hue="experiment_label",
     dodge=False,
     legend=False,
     palette=["#33658a", "#6a994e"],
@@ -775,10 +814,10 @@ sns.barplot(
 )
 axes[0, 0].axhline(0.5, color="#475569", linestyle="--", linewidth=1.0, alpha=0.8)
 axes[0, 0].set_ylim(0.45, max(1.0, float(formal_shift_summary["c2st_auc_mean"].max()) + 0.05))
-axes[0, 0].set_title("C2ST AUC por camada\nQuanto mais acima de 0.5, mais detectável é a mudança", fontsize=13)
+axes[0, 0].set_title("C2ST AUC por camada\nQuanto mais acima de 0.5, mais detectável é a mudança", fontsize=12.5)
 axes[0, 0].set_xlabel("")
 axes[0, 0].set_ylabel("ROC AUC")
-for patch, value in zip(axes[0, 0].patches, formal_shift_summary["c2st_auc_mean"]):
+for patch, value in zip(axes[0, 0].patches, formal_shift_plot["c2st_auc_mean"]):
     axes[0, 0].text(
         patch.get_x() + patch.get_width() / 2,
         value + 0.015,
@@ -790,22 +829,25 @@ for patch, value in zip(axes[0, 0].patches, formal_shift_summary["c2st_auc_mean"
     )
 
 sns.barplot(
-    data=formal_shift_summary,
-    x="experiment",
+    data=formal_shift_plot,
+    x="experiment_label",
     y="mmd_rbf_stat",
-    hue="experiment",
+    hue="experiment_label",
     dodge=False,
     legend=False,
     palette=["#2a9d8f", "#f4a261"],
     ax=axes[0, 1],
 )
-axes[0, 1].set_title("MMD-RBF por camada\nTeste global de diferença entre nominal e observado", fontsize=13)
+mmd_ymax = max(0.0015, float(formal_shift_plot["mmd_rbf_stat"].max()) * 1.35)
+axes[0, 1].set_ylim(0.0, mmd_ymax)
+axes[0, 1].set_title("MMD-RBF por camada\nTeste global de diferença entre nominal e observado", fontsize=12.5)
 axes[0, 1].set_xlabel("")
 axes[0, 1].set_ylabel("MMD statistic")
-for patch, (_, row) in zip(axes[0, 1].patches, formal_shift_summary.iterrows()):
+for patch, (_, row) in zip(axes[0, 1].patches, formal_shift_plot.iterrows()):
+    text_y = min(float(row["mmd_rbf_stat"]) + mmd_ymax * 0.06, mmd_ymax * 0.93)
     axes[0, 1].text(
         patch.get_x() + patch.get_width() / 2,
-        float(row["mmd_rbf_stat"]) + 0.01,
+        text_y,
         f"p={row['mmd_permutation_pvalue']:.3f}",
         ha="center",
         va="bottom",
@@ -821,12 +863,15 @@ sns.heatmap(
     center=0.0,
     linewidths=1.0,
     linecolor="white",
-    cbar_kws={"label": "Delta mean prob(observed)"},
+    annot_kws={"fontsize": 10.5},
+    cbar_kws={"label": "Delta prob(obs)", "shrink": 0.85},
     ax=axes[1, 0],
 )
-axes[1, 0].set_title("Proxy de density ratio por regime x prioridade\nOnde o deslocamento da camada de prazo é mais forte", fontsize=13)
+axes[1, 0].set_title("Density-ratio proxy por regime x prioridade\nOnde a camada de prazo desloca mais", fontsize=12.5)
 axes[1, 0].set_xlabel("Regime")
 axes[1, 0].set_ylabel("Priority")
+axes[1, 0].tick_params(axis="x", rotation=0)
+axes[1, 0].tick_params(axis="y", rotation=0)
 
 sns.heatmap(
     proc_delta_heatmap,
@@ -836,21 +881,24 @@ sns.heatmap(
     center=0.0,
     linewidths=1.0,
     linecolor="white",
-    cbar_kws={"label": "Delta mean prob(observed)"},
+    annot_kws={"fontsize": 10.5},
+    cbar_kws={"label": "Delta prob(obs)", "shrink": 0.85},
     ax=axes[1, 1],
 )
-axes[1, 1].set_title("Proxy de density ratio por regime x estágio\nOnde o deslocamento da camada de proc_time é mais forte", fontsize=13)
+axes[1, 1].set_title("Density-ratio proxy por regime x estágio\nOnde a camada de proc_time desloca mais", fontsize=12.5)
 axes[1, 1].set_xlabel("Regime")
 axes[1, 1].set_ylabel("Stage")
+axes[1, 1].tick_params(axis="x", rotation=0)
+axes[1, 1].tick_params(axis="y", rotation=0)
 
-fig.suptitle("Testes formais da camada observacional", x=0.02, y=1.02, ha="left", fontsize=18, fontweight="bold")
+fig.suptitle("Testes formais da camada observacional", x=0.02, y=0.98, ha="left", fontsize=17, fontweight="bold")
 fig.text(
     0.02,
-    0.95,
+    0.935,
     "Leitura rápida: a transformação nominal -> observado é estatisticamente detectável, mas o deslocamento permanece estruturado por prioridade, regime e estágio.",
-    fontsize=11,
+    fontsize=10.5,
 )
-fig.tight_layout(rect=(0, 0, 1, 0.93))
+fig.tight_layout(rect=(0, 0, 1, 0.9), h_pad=2.2, w_pad=2.0)
 fig.savefig(ARTIFACT_DIR / "formal_shift_experiments.png", dpi=160, bbox_inches="tight")
 plt.show()
 
@@ -919,8 +967,16 @@ queue_p99_heatmap = (
     tail_regime_summary.pivot(index="scale_code", columns="regime_code", values="queue_p99")
     .reindex(index=SCALE_ORDER, columns=REGIME_ORDER)
 )
+rare_segment_plot = rare_segment_summary.copy()
+rare_segment_plot["segment_display"] = (
+    rare_segment_plot["segment_label"]
+    .str.replace("_AND_", " + ", regex=False)
+    .str.replace("_", " ", regex=False)
+    .str.title()
+)
+rare_segment_plot = rare_segment_plot.sort_values("flow_p95", ascending=False).reset_index(drop=True)
 
-fig, axes = plt.subplots(1, 3, figsize=(21, 6.3))
+fig, axes = plt.subplots(1, 3, figsize=(18.2, 6.8), gridspec_kw={"width_ratios": [1, 1, 1.18]})
 sns.heatmap(
     flow_p99_heatmap,
     annot=True,
@@ -928,7 +984,7 @@ sns.heatmap(
     cmap="YlOrRd",
     linewidths=1.5,
     linecolor="white",
-    cbar_kws={"label": "p99 flow_time (min)"},
+    cbar_kws={"label": "p99 flow_time (min)", "shrink": 0.92},
     ax=axes[0],
 )
 axes[0].set_title("Cauda forte de flow_time\nCheca severidade extrema por escala x regime", fontsize=13)
@@ -942,7 +998,7 @@ sns.heatmap(
     cmap="PuBuGn",
     linewidths=1.5,
     linecolor="white",
-    cbar_kws={"label": "p99 queue_time (min)"},
+    cbar_kws={"label": "p99 queue_time (min)", "shrink": 0.92},
     ax=axes[1],
 )
 axes[1].set_title("Cauda forte de queue_time\nFila extrema por escala x regime", fontsize=13)
@@ -950,38 +1006,41 @@ axes[1].set_xlabel("Regime")
 axes[1].set_ylabel("Escala")
 
 sns.barplot(
-    data=rare_segment_summary,
-    x="segment_label",
-    y="flow_p95",
-    hue="segment_label",
+    data=rare_segment_plot,
+    x="flow_p95",
+    y="segment_display",
+    hue="segment_display",
     dodge=False,
     legend=False,
     palette="mako",
+    orient="h",
     ax=axes[2],
 )
 axes[2].set_title("Segmentos raros no release\nP95 de flow_time por segmento crítico", fontsize=13)
-axes[2].set_xlabel("")
-axes[2].set_ylabel("p95 flow_time (min)")
-axes[2].tick_params(axis="x", rotation=35)
-for patch, (_, row) in zip(axes[2].patches, rare_segment_summary.iterrows()):
+axes[2].set_xlabel("p95 flow_time (min)")
+axes[2].set_ylabel("")
+axes[2].grid(axis="x", alpha=0.25, zorder=0)
+rare_xmax = max(float(rare_segment_plot["flow_p95"].max()) * 1.18, 20.0)
+axes[2].set_xlim(0, rare_xmax)
+for patch, (_, row) in zip(axes[2].patches, rare_segment_plot.iterrows()):
     axes[2].text(
-        patch.get_x() + patch.get_width() / 2,
-        float(row["flow_p95"]) + 3,
-        f"n={int(row['job_count'])}",
-        ha="center",
-        va="bottom",
+        min(float(row["flow_p95"]) + rare_xmax * 0.015, rare_xmax * 0.96),
+        patch.get_y() + patch.get_height() / 2,
+        f"{float(row['flow_p95']):.1f} min | n={int(row['job_count'])}",
+        ha="left",
+        va="center",
         fontsize=9,
         color="#334155",
     )
 
-fig.suptitle("Caudas e segmentos raros", x=0.02, y=1.02, ha="left", fontsize=18, fontweight="bold")
+fig.suptitle("Caudas e segmentos raros", x=0.02, y=0.98, ha="left", fontsize=18, fontweight="bold")
 fig.text(
     0.02,
-    0.95,
+    0.93,
     "Leitura rápida: a sanidade do benchmark precisa aparecer também nas caudas; eventos raros não podem virar ruído arbitrário ou comportamento implausível.",
     fontsize=11,
 )
-fig.tight_layout(rect=(0, 0, 1, 0.93))
+fig.tight_layout(rect=(0, 0, 1, 0.9), w_pad=2.2)
 fig.savefig(ARTIFACT_DIR / "tail_and_rare_segments.png", dpi=160, bbox_inches="tight")
 plt.show()
 
