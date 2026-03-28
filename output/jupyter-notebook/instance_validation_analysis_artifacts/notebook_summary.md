@@ -4,6 +4,7 @@
 - Instances: `36`
 - Structural pass rate: `1.0000`
 - Release consistency checks pass: `True`
+- Relational consistency checks pass: `True`
 - FIFO schema checks pass: `True`
 - Due audit match share: `1.0000`
 - Proc audit match share: `1.0000`
@@ -15,6 +16,11 @@
 - Instance-space exact duplicate checks pass: `True`
 - Instance-space duplicate-like checks pass: `True`
 - Instance-space nearest-neighbor distance min: `2.3228`
+- Job due-layer C2ST AUC mean: `0.7777`
+- Proc-time layer C2ST AUC mean: `0.5980`
+- Tail flow p99 regime checks pass: `False`
+- Tail queue p99 regime checks pass: `False`
+- Tail due-margin p05 regime checks pass: `False`
 - Solver smoke small cases optimal: `True`
 - Solver smoke all cases have solution: `True`
 - Solver smoke large cases show non-trivial gap: `True`

@@ -70,6 +70,7 @@ REGIME_ORDER = ["balanced", "peak", "disrupted"]
 SCALE_ORDER = ["XS", "S", "M", "L"]
 PRIORITY_ORDER = ["URGENT", "CONTRACTED", "REGULAR"]
 INSTANCE_SPACE_DUPLICATE_LIKE_THRESHOLD = 2.0
+KNN_K_VALUES = [1, 3, 5]
 CORE_DIGEST_FILES = [
     "jobs.csv",
     "operations.csv",
@@ -375,6 +376,77 @@ def _standardize_feature_matrix(feature_frame: pd.DataFrame, feature_cols: list[
     return (matrix - means) / stds
 
 
+def _build_knn_tables(
+    feature_frame: pd.DataFrame,
+    distance_matrix: np.ndarray,
+    k_values: list[int],
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    max_k = max(k_values)
+    neighbor_order = np.argsort(distance_matrix, axis=1)[:, :max_k]
+    regimes = feature_frame["regime_code"].to_numpy()
+    scales = feature_frame["scale_code"].to_numpy()
+    instance_ids = feature_frame["instance_id"].to_numpy()
+
+    profile_rows = []
+    regime_rows = []
+    scale_rows = []
+    for row_idx in range(len(feature_frame)):
+        src_regime = regimes[row_idx]
+        src_scale = scales[row_idx]
+        neighbors = neighbor_order[row_idx]
+        neighbor_regimes = regimes[neighbors]
+        neighbor_scales = scales[neighbors]
+        neighbor_distances = distance_matrix[row_idx, neighbors]
+        for k in k_values:
+            subset_regimes = neighbor_regimes[:k]
+            subset_scales = neighbor_scales[:k]
+            subset_distances = neighbor_distances[:k]
+            profile_rows.append(
+                {
+                    "instance_id": instance_ids[row_idx],
+                    "scale_code": src_scale,
+                    "regime_code": src_regime,
+                    "k": int(k),
+                    "mean_knn_distance": float(np.mean(subset_distances)),
+                    "max_knn_distance": float(np.max(subset_distances)),
+                    "same_regime_neighbor_share": float(np.mean(subset_regimes == src_regime)),
+                    "same_scale_neighbor_share": float(np.mean(subset_scales == src_scale)),
+                }
+            )
+            if k == max_k:
+                for target_regime in REGIME_ORDER:
+                    regime_rows.append(
+                        {
+                            "source_regime": src_regime,
+                            "neighbor_regime": target_regime,
+                            "k": int(k),
+                            "share": float(np.mean(subset_regimes == target_regime)),
+                        }
+                    )
+                for target_scale in SCALE_ORDER:
+                    scale_rows.append(
+                        {
+                            "source_scale": src_scale,
+                            "neighbor_scale": target_scale,
+                            "k": int(k),
+                            "share": float(np.mean(subset_scales == target_scale)),
+                        }
+                    )
+
+    knn_profile = pd.DataFrame(profile_rows)
+    regime_composition = (
+        pd.DataFrame(regime_rows)
+        .groupby(["source_regime", "neighbor_regime", "k"], as_index=False)["share"]
+        .mean()
+    )
+    scale_composition = (
+        pd.DataFrame(scale_rows)
+        .groupby(["source_scale", "neighbor_scale", "k"], as_index=False)["share"]
+        .mean()
+    )
+    return knn_profile, regime_composition, scale_composition
+
+
 def build_instance_space_validation(
     root: Path,
     params: pd.DataFrame,
@@ -384,7 +456,7 @@ def build_instance_space_validation(
     downtimes: pd.DataFrame,
     job_metrics: pd.DataFrame,
     utilization: pd.DataFrame,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     core_digests = build_core_instance_digest_frame(root)
 
     job_agg = (
@@ -559,6 +631,11 @@ def build_instance_space_validation(
     nearest_neighbor_idx = distance_matrix.argmin(axis=1)
     feature_frame["nearest_neighbor_instance_id"] = feature_frame.loc[nearest_neighbor_idx, "instance_id"].to_numpy()
     feature_frame["nearest_neighbor_distance"] = distance_matrix[np.arange(len(feature_frame)), nearest_neighbor_idx]
+    knn_profile, regime_composition, scale_composition = _build_knn_tables(
+        feature_frame=feature_frame,
+        distance_matrix=distance_matrix,
+        k_values=KNN_K_VALUES,
+    )
 
     digest_counts = feature_frame["core_instance_digest"].value_counts()
     feature_frame["exact_core_duplicate"] = feature_frame["core_instance_digest"].map(digest_counts).gt(1)
@@ -603,10 +680,16 @@ def build_instance_space_validation(
                 "nearest_neighbor_distance_min": float(feature_frame["nearest_neighbor_distance"].min()),
                 "nearest_neighbor_distance_median": float(feature_frame["nearest_neighbor_distance"].median()),
                 "nearest_neighbor_distance_max": float(feature_frame["nearest_neighbor_distance"].max()),
+                "knn_same_regime_share_k5_mean": float(
+                    knn_profile.loc[knn_profile["k"] == max(KNN_K_VALUES), "same_regime_neighbor_share"].mean()
+                ),
+                "knn_same_scale_share_k5_mean": float(
+                    knn_profile.loc[knn_profile["k"] == max(KNN_K_VALUES), "same_scale_neighbor_share"].mean()
+                ),
             }
         ]
     )
-    return feature_frame, closest_pairs, summary
+    return feature_frame, closest_pairs, summary, knn_profile, regime_composition, scale_composition
 
 
 def machine_utilization_frame(schedule: pd.DataFrame, machines: pd.DataFrame, params: pd.DataFrame) -> pd.DataFrame:
@@ -751,7 +834,14 @@ def load_context(root: Path = REPO_ROOT) -> dict[str, Any]:
     )
     release_consistency_report = build_release_consistency_report(root, manifest, observed_noise_manifest, params)
     utilization = machine_utilization_frame(schedule, machines, params)
-    instance_space_features, instance_space_pairs, instance_space_summary = build_instance_space_validation(
+    (
+        instance_space_features,
+        instance_space_pairs,
+        instance_space_summary,
+        instance_space_knn_profile,
+        instance_space_knn_regime_composition,
+        instance_space_knn_scale_composition,
+    ) = build_instance_space_validation(
         root=root,
         params=params,
         jobs_enriched=jobs_enriched,
@@ -853,6 +943,9 @@ def load_context(root: Path = REPO_ROOT) -> dict[str, Any]:
         "instance_space_features": instance_space_features,
         "instance_space_pairs": instance_space_pairs,
         "instance_space_summary": instance_space_summary,
+        "instance_space_knn_profile": instance_space_knn_profile,
+        "instance_space_knn_regime_composition": instance_space_knn_regime_composition,
+        "instance_space_knn_scale_composition": instance_space_knn_scale_composition,
         "diagnostics": diagnostics,
         "unload": unload,
         "summary": summary,
@@ -892,6 +985,9 @@ UTILIZATION = CTX["utilization"]
 INSTANCE_SPACE_FEATURES = CTX["instance_space_features"]
 INSTANCE_SPACE_PAIRS = CTX["instance_space_pairs"]
 INSTANCE_SPACE_SUMMARY = CTX["instance_space_summary"]
+INSTANCE_SPACE_KNN_PROFILE = CTX["instance_space_knn_profile"]
+INSTANCE_SPACE_KNN_REGIME_COMPOSITION = CTX["instance_space_knn_regime_composition"]
+INSTANCE_SPACE_KNN_SCALE_COMPOSITION = CTX["instance_space_knn_scale_composition"]
 DIAGNOSTICS = CTX["diagnostics"]
 UNLOAD = CTX["unload"]
 
@@ -939,6 +1035,11 @@ def instance_space_tables(ctx: dict[str, Any] | None = None) -> dict[str, pd.Dat
         ),
         "instance_space_pairs": ctx["instance_space_pairs"].copy(),
         "instance_space_summary": ctx["instance_space_summary"].copy(),
+        "instance_space_knn_profile": ctx["instance_space_knn_profile"].sort_values(
+            ["k", "mean_knn_distance", "instance_id"]
+        ),
+        "instance_space_knn_regime_composition": ctx["instance_space_knn_regime_composition"].copy(),
+        "instance_space_knn_scale_composition": ctx["instance_space_knn_scale_composition"].copy(),
     }
 
 
@@ -1285,8 +1386,10 @@ def plot_instance_space_coverage(ctx: dict[str, Any] | None = None, save: bool =
     feature_frame = ctx["instance_space_features"].copy()
     closest_pairs = ctx["instance_space_pairs"].head(8).copy()
     summary = ctx["instance_space_summary"].iloc[0]
+    knn_profile = ctx["instance_space_knn_profile"].copy()
+    regime_composition = ctx["instance_space_knn_regime_composition"].copy()
 
-    fig, axes = plt.subplots(1, 3, figsize=(20, 6.5))
+    fig, axes = plt.subplots(2, 2, figsize=(18, 12))
     palette = {"balanced": "#2a9d8f", "peak": "#e9c46a", "disrupted": "#e76f51"}
     markers = {"XS": "o", "S": "s", "M": "D", "L": "^"}
 
@@ -1303,62 +1406,81 @@ def plot_instance_space_coverage(ctx: dict[str, Any] | None = None, save: bool =
         s=110,
         edgecolor="white",
         linewidth=0.8,
-        ax=axes[0],
+        ax=axes[0, 0],
     )
-    axes[0].set_title(
+    axes[0, 0].set_title(
         "PCA do espaço de instâncias\nPC1 + PC2 resumem a dispersão multivariada",
         fontsize=13,
     )
-    axes[0].set_xlabel(f"PC1 ({summary['pca_pc1_explained_variance_ratio']:.1%} da variância)")
-    axes[0].set_ylabel(f"PC2 ({summary['pca_pc2_explained_variance_ratio']:.1%} da variância)")
-    handles, labels = axes[0].get_legend_handles_labels()
+    axes[0, 0].set_xlabel(f"PC1 ({summary['pca_pc1_explained_variance_ratio']:.1%} da variância)")
+    axes[0, 0].set_ylabel(f"PC2 ({summary['pca_pc2_explained_variance_ratio']:.1%} da variância)")
+    handles, labels = axes[0, 0].get_legend_handles_labels()
     if handles:
-        axes[0].legend(handles, labels, title="Regime / escala", loc="best", frameon=True)
+        axes[0, 0].legend(handles, labels, title="Regime / escala", loc="best", frameon=True)
 
-    nn_plot = feature_frame.sort_values("nearest_neighbor_distance").copy()
-    sns.histplot(
-        data=nn_plot,
-        x="nearest_neighbor_distance",
-        bins=10,
-        color="#5b8e7d",
-        edgecolor="white",
-        alpha=0.9,
-        ax=axes[1],
+    sns.boxplot(
+        data=knn_profile,
+        x="k",
+        y="mean_knn_distance",
+        hue="scale_code",
+        hue_order=SCALE_ORDER,
+        palette="Set2",
+        ax=axes[0, 1],
     )
-    axes[1].axvline(
+    sns.stripplot(
+        data=knn_profile,
+        x="k",
+        y="mean_knn_distance",
+        color="#334155",
+        alpha=0.45,
+        size=4,
+        ax=axes[0, 1],
+    )
+    axes[0, 1].set_title(
+        "Perfil de distância kNN\nA distância média cresce quando ampliamos a vizinhança",
+        fontsize=13,
+    )
+    axes[0, 1].set_xlabel("k vizinhos mais próximos")
+    axes[0, 1].set_ylabel("Distância média aos k vizinhos")
+    axes[0, 1].axhline(
         INSTANCE_SPACE_DUPLICATE_LIKE_THRESHOLD,
         color="#475569",
         linestyle="--",
         linewidth=1.2,
         alpha=0.9,
     )
-    axes[1].set_title(
-        "Distância ao vizinho mais próximo\nLinha tracejada = limiar de screening duplicate-like",
+    axes[0, 1].text(
+        0.98,
+        0.08,
+        f"limiar duplicate-like = {INSTANCE_SPACE_DUPLICATE_LIKE_THRESHOLD:.1f}",
+        transform=axes[0, 1].transAxes,
+        ha="right",
+        va="bottom",
+        fontsize=10,
+        color="#334155",
+    )
+
+    regime_heatmap = (
+        regime_composition[regime_composition["k"] == max(KNN_K_VALUES)]
+        .pivot(index="source_regime", columns="neighbor_regime", values="share")
+        .reindex(index=REGIME_ORDER, columns=REGIME_ORDER)
+    )
+    sns.heatmap(
+        regime_heatmap,
+        annot=True,
+        fmt=".2f",
+        cmap="YlGnBu",
+        vmin=0.0,
+        vmax=1.0,
+        ax=axes[1, 0],
+        cbar_kws={"label": "Share médio entre os 5-NN"},
+    )
+    axes[1, 0].set_title(
+        "Pureza de vizinhança por regime (k=5)\nValores altos na diagonal indicam separação estrutural",
         fontsize=13,
     )
-    axes[1].set_xlabel("Distância Euclidiana em features padronizadas")
-    axes[1].set_ylabel("Número de instâncias")
-    axes[1].axvline(
-        float(summary["nearest_neighbor_distance_median"]),
-        color="#0f172a",
-        linestyle=":",
-        linewidth=1.2,
-        alpha=0.9,
-    )
-    axes[1].text(
-        float(summary["nearest_neighbor_distance_min"]) + 0.06,
-        max(axes[1].get_ylim()) * 0.92,
-        f"min = {summary['nearest_neighbor_distance_min']:.2f}",
-        fontsize=10,
-        color="#334155",
-    )
-    axes[1].text(
-        float(summary["nearest_neighbor_distance_median"]) + 0.06,
-        max(axes[1].get_ylim()) * 0.78,
-        f"mediana = {summary['nearest_neighbor_distance_median']:.2f}",
-        fontsize=10,
-        color="#334155",
-    )
+    axes[1, 0].set_xlabel("Regime do vizinho")
+    axes[1, 0].set_ylabel("Regime da instância fonte")
 
     def _short_instance_label(label: str) -> str:
         return (
@@ -1375,29 +1497,29 @@ def plot_instance_space_coverage(ctx: dict[str, Any] | None = None, save: bool =
         hue="duplicate_like_under_threshold",
         dodge=False,
         palette={False: "#8ecae6", True: "#d62828"},
-        ax=axes[2],
+        ax=axes[1, 1],
     )
-    axes[2].axvline(
+    axes[1, 1].axvline(
         INSTANCE_SPACE_DUPLICATE_LIKE_THRESHOLD,
         color="#475569",
         linestyle="--",
         linewidth=1.2,
         alpha=0.9,
     )
-    axes[2].set_title("Pares mais próximos do release\nNenhum par cai na zona de suspeita", fontsize=13)
-    axes[2].set_xlabel("Distância Euclidiana em features padronizadas")
-    axes[2].set_ylabel("")
+    axes[1, 1].set_title("Pares mais próximos do release\nNenhum par cai na zona de suspeita", fontsize=13)
+    axes[1, 1].set_xlabel("Distância Euclidiana em features padronizadas")
+    axes[1, 1].set_ylabel("")
     if closest_pairs["duplicate_like_under_threshold"].nunique() > 1:
-        axes[2].legend(title="Abaixo do limiar", loc="lower right", frameon=True)
+        axes[1, 1].legend(title="Abaixo do limiar", loc="lower right", frameon=True)
     else:
-        legend = axes[2].get_legend()
+        legend = axes[1, 1].get_legend()
         if legend is not None:
             legend.remove()
-        axes[2].text(
+        axes[1, 1].text(
             0.98,
             0.06,
             "0 pares abaixo do limiar",
-            transform=axes[2].transAxes,
+            transform=axes[1, 1].transAxes,
             ha="right",
             va="bottom",
             fontsize=10,
@@ -1501,6 +1623,13 @@ def export_all_artifacts(ctx: dict[str, Any] | None = None, instance_id: str = "
     instance_space_tables(ctx)["instance_space_features"].to_csv(ctx["artifact_dir"] / "instance_space_features.csv", index=False)
     instance_space_tables(ctx)["instance_space_pairs"].to_csv(ctx["artifact_dir"] / "instance_space_pairs.csv", index=False)
     instance_space_tables(ctx)["instance_space_summary"].to_csv(ctx["artifact_dir"] / "instance_space_summary.csv", index=False)
+    instance_space_tables(ctx)["instance_space_knn_profile"].to_csv(ctx["artifact_dir"] / "instance_space_knn_profile.csv", index=False)
+    instance_space_tables(ctx)["instance_space_knn_regime_composition"].to_csv(
+        ctx["artifact_dir"] / "instance_space_knn_regime_composition.csv", index=False
+    )
+    instance_space_tables(ctx)["instance_space_knn_scale_composition"].to_csv(
+        ctx["artifact_dir"] / "instance_space_knn_scale_composition.csv", index=False
+    )
     pd.DataFrame([ctx["summary"]]).to_csv(ctx["artifact_dir"] / "repl_summary.csv", index=False)
     plot_inventory_overview(ctx, save=True)
     plot_validation_overview(ctx, save=True)

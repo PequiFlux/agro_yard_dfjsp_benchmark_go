@@ -216,3 +216,17 @@ Figuras complementares:
 ## Leitura correta desta base
 
 Esta base continua sendo sintética. O ganho aqui não é “virar dado real”, e sim sair de um benchmark excessivamente limpo para um dataset seed mais útil para testes de robustez, comparação de métodos e geração futura de instâncias com G2MILP, sem perder rastreabilidade.
+
+## Próximos passos
+
+Os próximos passos metodologicamente mais fortes para validar e melhorar esta base são:
+
+- adicionar validação `holdout-based` contra algum subconjunto real, se ele existir
+- separar `fidelity`, `diversity` e `authenticity`
+- medir utilidade downstream com `TSTR/TRTS`
+- expandir `PCA + kNN` para `instance space analysis` orientada a solver
+- gerar instâncias mais `graded` e mais `discriminating`
+- fortalecer o benchmark com `performance profiles` e curvas `fixed-budget/fixed-target`
+- reforçar a validação de caudas e segmentos raros
+
+O detalhamento desses próximos passos, com racional metodológico, backlog implementável e referências da literatura, está em [docs/synthetic_data_validation_next_steps.md](docs/synthetic_data_validation_next_steps.md).
