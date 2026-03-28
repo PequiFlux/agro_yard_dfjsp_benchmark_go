@@ -976,7 +976,11 @@ rare_segment_plot["segment_display"] = (
 )
 rare_segment_plot = rare_segment_plot.sort_values("flow_p95", ascending=False).reset_index(drop=True)
 
-fig, axes = plt.subplots(1, 3, figsize=(18.2, 6.8), gridspec_kw={"width_ratios": [1, 1, 1.18]})
+fig, axes = plt.subplot_mosaic(
+    [["flow", "queue"], ["rare", "rare"]],
+    figsize=(15.8, 10.1),
+    gridspec_kw={"height_ratios": [1.0, 1.15]},
+)
 sns.heatmap(
     flow_p99_heatmap,
     annot=True,
@@ -985,11 +989,11 @@ sns.heatmap(
     linewidths=1.5,
     linecolor="white",
     cbar_kws={"label": "p99 flow_time (min)", "shrink": 0.92},
-    ax=axes[0],
+    ax=axes["flow"],
 )
-axes[0].set_title("Cauda forte de flow_time\nCheca severidade extrema por escala x regime", fontsize=13)
-axes[0].set_xlabel("Regime")
-axes[0].set_ylabel("Escala")
+axes["flow"].set_title("Cauda forte de flow_time\nCheca severidade extrema por escala x regime", fontsize=13)
+axes["flow"].set_xlabel("Regime")
+axes["flow"].set_ylabel("Escala")
 
 sns.heatmap(
     queue_p99_heatmap,
@@ -999,11 +1003,11 @@ sns.heatmap(
     linewidths=1.5,
     linecolor="white",
     cbar_kws={"label": "p99 queue_time (min)", "shrink": 0.92},
-    ax=axes[1],
+    ax=axes["queue"],
 )
-axes[1].set_title("Cauda forte de queue_time\nFila extrema por escala x regime", fontsize=13)
-axes[1].set_xlabel("Regime")
-axes[1].set_ylabel("Escala")
+axes["queue"].set_title("Cauda forte de queue_time\nFila extrema por escala x regime", fontsize=13)
+axes["queue"].set_xlabel("Regime")
+axes["queue"].set_ylabel("Escala")
 
 sns.barplot(
     data=rare_segment_plot,
@@ -1014,16 +1018,16 @@ sns.barplot(
     legend=False,
     palette="mako",
     orient="h",
-    ax=axes[2],
+    ax=axes["rare"],
 )
-axes[2].set_title("Segmentos raros no release\nP95 de flow_time por segmento crítico", fontsize=13)
-axes[2].set_xlabel("p95 flow_time (min)")
-axes[2].set_ylabel("")
-axes[2].grid(axis="x", alpha=0.25, zorder=0)
+axes["rare"].set_title("Segmentos raros no release\nP95 de flow_time por segmento crítico", fontsize=13)
+axes["rare"].set_xlabel("p95 flow_time (min)")
+axes["rare"].set_ylabel("")
+axes["rare"].grid(axis="x", alpha=0.25, zorder=0)
 rare_xmax = max(float(rare_segment_plot["flow_p95"].max()) * 1.18, 20.0)
-axes[2].set_xlim(0, rare_xmax)
-for patch, (_, row) in zip(axes[2].patches, rare_segment_plot.iterrows()):
-    axes[2].text(
+axes["rare"].set_xlim(0, rare_xmax)
+for patch, (_, row) in zip(axes["rare"].patches, rare_segment_plot.iterrows()):
+    axes["rare"].text(
         min(float(row["flow_p95"]) + rare_xmax * 0.015, rare_xmax * 0.96),
         patch.get_y() + patch.get_height() / 2,
         f"{float(row['flow_p95']):.1f} min | n={int(row['job_count'])}",
@@ -1040,7 +1044,7 @@ fig.text(
     "Leitura rápida: a sanidade do benchmark precisa aparecer também nas caudas; eventos raros não podem virar ruído arbitrário ou comportamento implausível.",
     fontsize=11,
 )
-fig.tight_layout(rect=(0, 0, 1, 0.9), w_pad=2.2)
+fig.tight_layout(rect=(0, 0, 1, 0.9), h_pad=2.0, w_pad=2.0)
 fig.savefig(ARTIFACT_DIR / "tail_and_rare_segments.png", dpi=160, bbox_inches="tight")
 plt.show()
 
@@ -1161,7 +1165,11 @@ solver_smoke_df["objective_vs_dual_gap_min"] = (
 
 display(solver_smoke_df)
 
-fig, axes = plt.subplots(1, 3, figsize=(20, 6.5))
+fig, axes = plt.subplot_mosaic(
+    [["bounds", "gap"], ["size", "size"]],
+    figsize=(16.0, 10.1),
+    gridspec_kw={"height_ratios": [1.0, 1.1]},
+)
 
 sns.barplot(
     data=solver_smoke_df,
@@ -1170,9 +1178,9 @@ sns.barplot(
     hue="status_label",
     dodge=False,
     palette={"optimal": "#2a9d8f", "time_limit": "#e9c46a", "feasible": "#8ecae6", "other": "#94a3b8", "infeasible": "#d62828"},
-    ax=axes[0],
+    ax=axes["bounds"],
 )
-axes[0].scatter(
+axes["bounds"].scatter(
     range(len(solver_smoke_df)),
     solver_smoke_df["dual_bound_makespan_min"],
     color="#1d3557",
@@ -1183,13 +1191,13 @@ axes[0].scatter(
 )
 for idx, row in solver_smoke_df.reset_index(drop=True).iterrows():
     if pd.notna(row["mip_gap"]):
-        axes[0].text(idx, row["objective_makespan_min"] + 8, f"gap {row['mip_gap']:.1%}", ha="center", va="bottom", fontsize=9, color="#334155")
-axes[0].set_title("Incumbente e dual bound por caso\nFechar o gap fica mais difícil à medida que o tamanho cresce", fontsize=13)
-axes[0].set_xlabel("")
-axes[0].set_ylabel("Makespan (min)")
-axes[0].tick_params(axis="x", rotation=15)
-handles, labels = axes[0].get_legend_handles_labels()
-axes[0].legend(handles, labels, loc="upper left", frameon=True)
+        axes["bounds"].text(idx, row["objective_makespan_min"] + 8, f"gap {row['mip_gap']:.1%}", ha="center", va="bottom", fontsize=9, color="#334155")
+axes["bounds"].set_title("Incumbente e dual bound por caso\nFechar o gap fica mais difícil à medida que o tamanho cresce", fontsize=13)
+axes["bounds"].set_xlabel("")
+axes["bounds"].set_ylabel("Makespan (min)")
+axes["bounds"].tick_params(axis="x", rotation=15)
+handles, labels = axes["bounds"].get_legend_handles_labels()
+axes["bounds"].legend(handles, labels, loc="upper left", frameon=True)
 
 sns.barplot(
     data=solver_smoke_df,
@@ -1198,16 +1206,16 @@ sns.barplot(
     hue="recommended_solver_track",
     dodge=False,
     palette="deep",
-    ax=axes[1],
+    ax=axes["gap"],
 )
-axes[1].set_title("Gap relativo sob orçamento fixo de 5 s\nA escada de dificuldade já aparece no smoke test", fontsize=13)
-axes[1].set_xlabel("")
-axes[1].set_ylabel("MIP gap (%)")
-axes[1].tick_params(axis="x", rotation=15)
-for patch in axes[1].patches:
+axes["gap"].set_title("Gap relativo sob orçamento fixo de 5 s\nA escada de dificuldade já aparece no smoke test", fontsize=13)
+axes["gap"].set_xlabel("")
+axes["gap"].set_ylabel("MIP gap (%)")
+axes["gap"].tick_params(axis="x", rotation=15)
+for patch in axes["gap"].patches:
     height = patch.get_height()
     if np.isfinite(height) and height > 0:
-        axes[1].text(patch.get_x() + patch.get_width() / 2, height + 1.0, f"{height:.1f}%", ha="center", va="bottom", fontsize=9, color="#334155")
+        axes["gap"].text(patch.get_x() + patch.get_width() / 2, height + 1.0, f"{height:.1f}%", ha="center", va="bottom", fontsize=9, color="#334155")
 
 size_plot = solver_smoke_df.melt(
     id_vars=["case_label"],
@@ -1226,22 +1234,22 @@ sns.barplot(
     x="case_label",
     y="count",
     hue="size_metric",
-    ax=axes[2],
+    ax=axes["size"],
     palette="Set2",
 )
-axes[2].set_title("Crescimento do modelo exato\nO custo combinatório sobe rapidamente com o tamanho", fontsize=13)
-axes[2].set_xlabel("")
-axes[2].set_ylabel("Contagem")
-axes[2].tick_params(axis="x", rotation=15)
+axes["size"].set_title("Crescimento do modelo exato\nO custo combinatório sobe rapidamente com o tamanho", fontsize=13)
+axes["size"].set_xlabel("")
+axes["size"].set_ylabel("Contagem")
+axes["size"].tick_params(axis="x", rotation=15)
 
-fig.suptitle("Smoke test orientado a solver", x=0.02, y=1.03, ha="left", fontsize=18, fontweight="bold")
+fig.suptitle("Smoke test orientado a solver", x=0.02, y=0.98, ha="left", fontsize=18, fontweight="bold")
 fig.text(
     0.02,
-    0.95,
+    0.93,
     "Leitura rápida: o pipeline exato carrega, fecha nos menores e passa a exibir gaps não triviais quando a escala do caso cresce.",
     fontsize=11,
 )
-fig.tight_layout(rect=(0, 0, 1, 0.92))
+fig.tight_layout(rect=(0, 0, 1, 0.9), h_pad=2.0, w_pad=1.8)
 fig.savefig(ARTIFACT_DIR / "solver_oriented_smoke_test.png", dpi=160, bbox_inches="tight")
 plt.show()
 

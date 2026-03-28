@@ -1116,7 +1116,11 @@ def plot_inventory_overview(ctx: dict[str, Any] | None = None, save: bool = Fals
 
 def plot_validation_overview(ctx: dict[str, Any] | None = None, save: bool = False):
     ctx = ctx or CTX
-    fig, axes = plt.subplots(1, 3, figsize=(19, 5.6))
+    fig, axes = plt.subplot_mosaic(
+        [["issues", "audit"], ["margin", "margin"]],
+        figsize=(15.8, 10.0),
+        gridspec_kw={"height_ratios": [1.0, 1.1]},
+    )
     issue_heatmap = ctx["structural_report"].pivot_table(
         index="scale_code",
         columns="regime_code",
@@ -1130,14 +1134,14 @@ def plot_validation_overview(ctx: dict[str, Any] | None = None, save: bool = Fal
         annot=issue_annotations,
         fmt="",
         cmap=sns.light_palette("#15803d", as_cmap=True),
-        ax=axes[0],
+        ax=axes["issues"],
         cbar=False,
         linewidths=1.5,
         linecolor="white",
     )
-    axes[0].set_title("Integridade estrutural\nCada célula deve ficar em PASS", fontsize=13)
-    axes[0].set_xlabel("Regime")
-    axes[0].set_ylabel("Escala")
+    axes["issues"].set_title("Integridade estrutural\nCada célula deve ficar em PASS", fontsize=13)
+    axes["issues"].set_xlabel("Regime")
+    axes["issues"].set_ylabel("Escala")
 
     audit_summary = pd.DataFrame(
         {
@@ -1148,30 +1152,49 @@ def plot_validation_overview(ctx: dict[str, Any] | None = None, save: bool = Fal
             ],
         }
     )
-    sns.barplot(data=audit_summary, x="check", y="match_share", hue="check", dodge=False, legend=False, ax=axes[1], palette=["#2a9d8f", "#457b9d"])
-    axes[1].axhline(1.0, color="#0f172a", linewidth=1.0, linestyle="--", alpha=0.7)
-    axes[1].set_ylim(0.995, 1.001)
-    axes[1].yaxis.set_major_formatter(PercentFormatter(1.0, decimals=1))
-    axes[1].set_title("Reconciliação auditável\nMeta: 100% das linhas", fontsize=13)
-    axes[1].set_xlabel("")
-    axes[1].set_ylabel("Linhas reconciliadas")
-    _label_bars(axes[1], fmt="{:.1%}", pad_share=0.001)
+    sns.barplot(
+        data=audit_summary,
+        x="check",
+        y="match_share",
+        hue="check",
+        dodge=False,
+        legend=False,
+        ax=axes["audit"],
+        palette=["#2a9d8f", "#457b9d"],
+    )
+    axes["audit"].axhline(1.0, color="#0f172a", linewidth=1.0, linestyle="--", alpha=0.7)
+    axes["audit"].set_ylim(0.995, 1.001)
+    axes["audit"].yaxis.set_major_formatter(PercentFormatter(1.0, decimals=1))
+    axes["audit"].set_title("Reconciliação auditável\nMeta: 100% das linhas", fontsize=13)
+    axes["audit"].set_xlabel("")
+    axes["audit"].set_ylabel("Linhas reconciliadas")
+    _label_bars(axes["audit"], fmt="{:.1%}", pad_share=0.001)
 
     margin_order = REGIME_ORDER
-    sns.boxplot(data=ctx["jobs_enriched"], x="regime_code", y="due_margin_over_lb_min", order=margin_order, hue="regime_code", dodge=False, legend=False, ax=axes[2], palette="flare")
-    _annotate_category_medians(axes[2], ctx["jobs_enriched"], "regime_code", "due_margin_over_lb_min", margin_order)
-    axes[2].set_title("Prazo acima do lower bound físico\nMediana anotada em cada regime", fontsize=13)
-    axes[2].set_xlabel("Regime")
-    axes[2].set_ylabel("Margem sobre LB (min)")
+    sns.boxplot(
+        data=ctx["jobs_enriched"],
+        x="regime_code",
+        y="due_margin_over_lb_min",
+        order=margin_order,
+        hue="regime_code",
+        dodge=False,
+        legend=False,
+        ax=axes["margin"],
+        palette="flare",
+    )
+    _annotate_category_medians(axes["margin"], ctx["jobs_enriched"], "regime_code", "due_margin_over_lb_min", margin_order)
+    axes["margin"].set_title("Prazo acima do lower bound físico\nMediana anotada em cada regime", fontsize=13)
+    axes["margin"].set_xlabel("Regime")
+    axes["margin"].set_ylabel("Margem sobre LB (min)")
 
-    fig.suptitle("Validação estrutural e auditabilidade", x=0.02, y=1.03, ha="left", fontsize=18, fontweight="bold")
+    fig.suptitle("Validação estrutural e auditabilidade", x=0.02, y=0.98, ha="left", fontsize=18, fontweight="bold")
     fig.text(
         0.02,
-        0.96,
+        0.93,
         "Leitura rápida: as 36 instâncias passam sem issues e os dois audits reconciliam 100% das linhas centrais.",
         fontsize=11,
     )
-    fig.tight_layout(rect=(0, 0, 1, 0.92))
+    fig.tight_layout(rect=(0, 0, 1, 0.9), h_pad=2.0, w_pad=1.8)
     if save:
         _ensure_artifact_dir(ctx)
         fig.savefig(ctx["artifact_dir"] / "structural_validation_and_auditability.png", dpi=160, bbox_inches="tight")
