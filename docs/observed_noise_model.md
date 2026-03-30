@@ -60,7 +60,13 @@ slack_obs_j =
 Depois do cálculo da folga observada:
 
 ```text
-due_obs_j = arrival_j + clip(slack_obs_j, LB_j + 18, b(priority_j) + 120)
+due_obs_j =
+    arrival_j
+  + clip(
+        value = slack_obs_j,
+        lower = LB_j + 18,
+        upper = b(priority_j) + 120
+    )
 ```
 
 Onde:
@@ -75,23 +81,23 @@ Onde:
 ### Tempo de processamento observado
 
 ```text
+eta_raw_jom =
+    u_m
+  + u_shift
+  + u_stage_inst
+  + u_regime
+  + beta_stage * g_j
+  + u_commodity
+  + u_moisture
+  + eps_jom
+
+eta_clip_jom = clip(value = eta_raw_jom, lower = -0.28, upper = 0.42)
+
 p_obs_jom =
-  max(
-    p_stage_min,
-    round(
-      p_nom_jom * exp(
-        u_m
-      + u_shift
-      + u_stage_inst
-      + u_regime
-      + beta_stage * g_j
-      + u_commodity
-      + u_moisture
-      + eps_jom
-      )
-      + pause_jom
+    max(
+        p_stage_min,
+        round(p_nom_jom * exp(eta_clip_jom) + pause_jom)
     )
-  )
 ```
 
 Onde:
@@ -123,7 +129,9 @@ slack_obs(j) =
 O prazo absoluto observado é:
 
 ```text
-due_obs(j) = arrival_j + clip(slack_obs(j), lower_j, upper_j)
+due_obs(j) =
+    arrival_j
+  + clip(value = slack_obs(j), lower = lower_j, upper = upper_j)
 ```
 
 Com:
@@ -203,30 +211,30 @@ Observação metodológica:
 Para cada tripla elegível `(job, op, machine)`:
 
 ```text
+eta_raw =
+    u_machine
+  + u_shift
+  + u_instance
+  + u_regime
+  + beta_stage * congestion
+  + u_commodity
+  + u_moisture
+  + eps_idio
+
+eta_clip = clip(value = eta_raw, lower = -0.28, upper = 0.42)
+
 p_obs =
-  max(
-    p_min(stage),
-    round(
-      p_nom * exp(
-        u_machine
-      + u_shift
-      + u_instance
-      + u_regime
-      + beta_stage * congestion
-      + u_commodity
-      + u_moisture
-      + eps_idio
-      )
-      + pause
+    max(
+        p_min(stage),
+        round(p_nom * exp(eta_clip) + pause)
     )
-  )
 ```
 
-O multiplicador logarítmico é truncado em:
+Onde:
 
-```text
-[-0.28, 0.42]
-```
+- `eta_raw` é o deslocamento logarítmico antes do truncamento
+- `eta_clip` é o deslocamento efetivamente aplicado ao tempo nominal
+- `clip(value, lower, upper)` significa truncar o valor ao intervalo fechado `[lower, upper]`
 
 ### Piso mínimo por estágio
 
@@ -413,7 +421,7 @@ A release só deve ser tratada como válida quando todos os critérios abaixo fo
 - cada job continua com 4 operações
 - cada job continua com 3 precedências
 - toda operação continua tendo ao menos uma máquina elegível
-- nenhum prazo observado fica abaixo de `nominal_lb + 18`
+- nenhum prazo observado fica abaixo de `job_noise_audit.csv::nominal_processing_lb_min + 18`
 - o baseline FIFO permanece sem overlap por máquina
 - `fifo_schedule.csv` e `fifo_job_metrics.csv` permanecem consistentes com `eligible_machines.csv`
 

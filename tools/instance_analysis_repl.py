@@ -91,7 +91,7 @@ def find_repo_root(start: Path) -> Path:
 
 
 REPO_ROOT = find_repo_root(Path(__file__).resolve())
-ARTIFACT_DIR = REPO_ROOT / "output" / "repl-analysis-artifacts"
+DEFAULT_ARTIFACT_DIR = REPO_ROOT / "output" / "repl-analysis-artifacts"
 
 
 def iter_instance_dirs(root: Path) -> list[Path]:
@@ -800,7 +800,8 @@ def schedule_plot(instance_id: str, schedule: pd.DataFrame, downtimes: pd.DataFr
     return fig
 
 
-def load_context(root: Path = REPO_ROOT) -> dict[str, Any]:
+def load_context(root: Path = REPO_ROOT, artifact_dir: Path | None = None) -> dict[str, Any]:
+    artifact_dir = artifact_dir or (DEFAULT_ARTIFACT_DIR if root == REPO_ROOT else root / "output" / "repl-analysis-artifacts")
     params = load_params_frame(root).sort_values(["scale_code", "regime_code", "replicate"]).reset_index(drop=True)
     catalog = pd.read_csv(root / "catalog" / "benchmark_catalog.csv")
     family_summary = pd.read_csv(root / "catalog" / "instance_family_summary.csv")
@@ -913,7 +914,7 @@ def load_context(root: Path = REPO_ROOT) -> dict[str, Any]:
 
     return {
         "root": root,
-        "artifact_dir": ARTIFACT_DIR,
+        "artifact_dir": artifact_dir,
         "params": params,
         "catalog": catalog,
         "family_summary": family_summary,

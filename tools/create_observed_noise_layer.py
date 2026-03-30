@@ -346,6 +346,8 @@ def validate_instance(instance_dir: Path) -> Dict[str, object]:
     ops = pd.read_csv(instance_dir / "operations.csv")
     prec = pd.read_csv(instance_dir / "precedences.csv")
     elig = pd.read_csv(instance_dir / "eligible_machines.csv")
+    due_audit = pd.read_csv(instance_dir / "job_noise_audit.csv")
+    proc_audit = pd.read_csv(instance_dir / "proc_noise_audit.csv")
     machines = pd.read_csv(instance_dir / "machines.csv")
     downs = pd.read_csv(instance_dir / "machine_downtimes.csv")
     events = pd.read_csv(instance_dir / "events.csv")
@@ -366,10 +368,29 @@ def validate_instance(instance_dir: Path) -> Dict[str, object]:
     if not op_keys.issubset(elig_keys):
         issues.append("ops_without_eligible_machine")
     # due lower bound
-    lb = elig.groupby(["job_id", "op_seq"])["proc_time_min"].min().reset_index().groupby("job_id")["proc_time_min"].sum()
-    merged = jobs.set_index("job_id").join(lb.rename("nominal_lb"))
-    if not ((merged["completion_due_min"] - merged["arrival_time_min"]) >= (merged["nominal_lb"] + 18)).all():
+    due_audit_idx = due_audit.drop_duplicates(subset=["job_id"]).set_index("job_id")
+    merged = jobs.set_index("job_id").join(
+        due_audit_idx[["completion_due_observed_min", "nominal_processing_lb_min"]]
+    )
+    if merged[["completion_due_observed_min", "nominal_processing_lb_min"]].isna().any().any():
+        issues.append("job_due_audit_missing_fields")
+    if not merged["completion_due_min"].eq(merged["completion_due_observed_min"]).all():
+        issues.append("job_due_audit_mismatch")
+    if not (
+        (merged["completion_due_min"] - merged["arrival_time_min"])
+        >= (merged["nominal_processing_lb_min"] + 18)
+    ).all():
         issues.append("due_below_nominal_lb_plus_buffer")
+    proc_obs = proc_audit.rename(columns={"proc_time_observed_min": "proc_time_audit_min"})
+    proc_merge = elig.merge(
+        proc_obs[["job_id", "op_seq", "machine_id", "proc_time_audit_min"]],
+        on=["job_id", "op_seq", "machine_id"],
+        how="left",
+    )
+    if proc_merge["proc_time_audit_min"].isna().any():
+        issues.append("proc_audit_missing_rows")
+    if not proc_merge["proc_time_min"].eq(proc_merge["proc_time_audit_min"]).all():
+        issues.append("proc_audit_mismatch")
     # events consistency
     vis = events[events["event_type"] == "JOB_VISIBLE"].groupby("entity_id")["event_time_min"].count()
     arr = events[events["event_type"] == "JOB_ARRIVAL"].groupby("entity_id")["event_time_min"].count()

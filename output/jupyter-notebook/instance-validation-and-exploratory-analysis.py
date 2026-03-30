@@ -6,7 +6,7 @@
 #
 # **Objetivo**
 #
-# Usar o próprio notebook como workspace interativo principal para validar e explorar o release oficial `v1.1.0-observed`, reaproveitando o backend consolidado em `tools/instance_analysis_repl.py`.
+# Usar o próprio notebook como workspace interativo principal para gerar, validar e explorar o release oficial `v1.1.0-observed`, reaproveitando o backend consolidado em `tools/instance_analysis_repl.py`.
 #
 # **O que este notebook cobre**
 #
@@ -23,7 +23,13 @@
 #
 # **Modo de uso**
 #
-# Este notebook é a interface interativa principal. O módulo `tools/instance_analysis_repl.py` funciona como backend compartilhado da análise, para evitar duas implementações diferentes do mesmo pipeline analítico.
+# Este notebook é a interface interativa principal. Ele pode:
+#
+# - analisar o release já presente no repositório
+# - regenerar uma release observada a partir de um root fonte
+# - recomputar toda a análise, inclusive `PCA`, `kNN`, tabelas e figuras
+#
+# O módulo `tools/instance_analysis_repl.py` funciona como backend compartilhado da análise, para evitar duas implementações diferentes do mesmo pipeline analítico.
 
 # %%
 # Setup: notebook runtime, paths and shared backend
@@ -64,22 +70,61 @@ def find_repo_root(start: Path) -> Path:
         "Could not locate repository root from current working directory."
     )
 
-
 REPO_ROOT = find_repo_root(Path.cwd().resolve())
-ARTIFACT_DIR = (
-    REPO_ROOT / "output" / "jupyter-notebook" / "instance_validation_analysis_artifacts"
-)
-ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
 
 TOOLS_DIR = REPO_ROOT / "tools"
 if str(TOOLS_DIR) not in sys.path:
     sys.path.insert(0, str(TOOLS_DIR))
 
+import create_observed_noise_layer as observed_release_builder
 import instance_analysis_repl as repl
 import exact_solver_smoke as solver_smoke
 
+observed_release_builder = importlib.reload(observed_release_builder)
 repl = importlib.reload(repl)
 solver_smoke = importlib.reload(solver_smoke)
+
+PIPELINE_CONFIG = {
+    "generate_observed_release": False,
+    "source_root": None,
+    "target_root": str(REPO_ROOT),
+    "sample_instance_id": "GO_XS_DISRUPTED_01",
+}
+
+
+def _resolve_path(value: str | Path | None) -> Path | None:
+    if value in (None, "", "."):
+        return None
+    return Path(value).expanduser().resolve()
+
+
+def prepare_analysis_root(config: dict[str, object]) -> Path:
+    target_root = _resolve_path(config.get("target_root")) or REPO_ROOT
+    if not bool(config.get("generate_observed_release", False)):
+        return target_root
+
+    source_root = _resolve_path(config.get("source_root"))
+    if source_root is None:
+        raise ValueError(
+            "PIPELINE_CONFIG['source_root'] precisa apontar para o release fonte quando "
+            "generate_observed_release=True."
+        )
+    if source_root == target_root:
+        raise ValueError(
+            "source_root e target_root não podem ser o mesmo diretório quando o notebook "
+            "for regenerar a release observada."
+        )
+
+    print(f"[notebook] Generating observed release from {source_root} -> {target_root}")
+    observed_release_builder.main(src_root=source_root, out_root=target_root)
+    return target_root
+
+
+ANALYSIS_ROOT = prepare_analysis_root(PIPELINE_CONFIG)
+ARTIFACT_DIR = (
+    ANALYSIS_ROOT / "output" / "jupyter-notebook" / "instance_validation_analysis_artifacts"
+)
+ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
 
 SEED = repl.SEED
 np.random.seed(SEED)
@@ -370,70 +415,83 @@ def build_relational_consistency_reports(
 # %% [markdown]
 # ## Plan
 #
-# 1. Carregar o backend analítico compartilhado e expor os objetos principais no notebook.
-# 2. Validar integridade estrutural, reconciliar audits e inspecionar métricas agregadas do release.
-# 3. Verificar se a camada observacional reduz sobre-determinismo sem quebrar a semântica operacional.
-# 4. Medir formalmente o deslocamento nominal -> observado e a consistência relacional do release.
-# 5. Testar caudas, segmentos raros e monotonicidade forte por regime.
-# 6. Confirmar que o release cobre regiões distintas do espaço de instâncias e não colapsa em casos quase redundantes.
-# 7. Executar um smoke test exato com orçamento fixo para mostrar que o benchmark é informativo do ponto de vista algorítmico.
-# 8. Fazer drilldown visual em uma instância para checagem manual do baseline FIFO.
+# 1. Opcionalmente regenerar a release observada a partir de um root fonte.
+# 2. Carregar o backend analítico compartilhado sobre o root alvo e expor os objetos principais no notebook.
+# 3. Validar integridade estrutural, reconciliar audits e inspecionar métricas agregadas do release.
+# 4. Verificar se a camada observacional reduz sobre-determinismo sem quebrar a semântica operacional.
+# 5. Medir formalmente o deslocamento nominal -> observado e a consistência relacional do release.
+# 6. Testar caudas, segmentos raros e monotonicidade forte por regime.
+# 7. Confirmar que o release cobre regiões distintas do espaço de instâncias e não colapsa em casos quase redundantes.
+# 8. Executar um smoke test exato com orçamento fixo para mostrar que o benchmark é informativo do ponto de vista algorítmico.
+# 9. Fazer drilldown visual em uma instância para checagem manual do baseline FIFO.
 
 # %%
 # Bootstrap the notebook workspace from the shared REPL backend
-CTX = repl.CTX
-SUMMARY = repl.SUMMARY
-NOTEBOOK_CTX = dict(repl.CTX)
-NOTEBOOK_CTX["artifact_dir"] = ARTIFACT_DIR
-
-params = repl.PARAMS.copy()
-catalog = repl.CATALOG.copy()
-family_summary = repl.FAMILY_SUMMARY.copy()
-observed_noise_manifest = repl.OBSERVED_NOISE_MANIFEST
-manifest = repl.MANIFEST
-
-jobs = repl.JOBS.copy()
-jobs_enriched = repl.JOBS_ENRICHED.copy()
-operations = repl.OPERATIONS.copy()
-eligible = repl.ELIGIBLE.copy()
-machines = repl.MACHINES.copy()
-precedences = repl.PRECEDENCES.copy()
-downtimes = repl.DOWNTIMES.copy()
-events = repl.EVENTS.copy()
-schedule = repl.SCHEDULE.copy()
-job_metrics = repl.JOB_METRICS.copy()
-due_audit = repl.DUE_AUDIT.copy()
-proc_audit = repl.PROC_AUDIT.copy()
-proc_audit_enriched = repl.PROC_AUDIT_ENRICHED.copy()
-congestion = repl.CONGESTION.copy()
-
-structural_report = repl.STRUCTURAL_REPORT.copy()
-event_report = repl.EVENT_REPORT.copy()
-audit_reconciliation = repl.AUDIT_RECONCILIATION.copy()
-regime_checks = repl.REGIME_CHECKS.copy()
-fifo_schema_report = repl.FIFO_SCHEMA_REPORT.copy()
-release_consistency_report = repl.RELEASE_CONSISTENCY_REPORT.copy()
-utilization = repl.UTILIZATION.copy()
-instance_space_features = repl.INSTANCE_SPACE_FEATURES.copy()
-instance_space_pairs = repl.INSTANCE_SPACE_PAIRS.copy()
-instance_space_summary = repl.INSTANCE_SPACE_SUMMARY.copy()
-instance_space_knn_profile = repl.INSTANCE_SPACE_KNN_PROFILE.copy()
-instance_space_knn_regime_composition = repl.INSTANCE_SPACE_KNN_REGIME_COMPOSITION.copy()
-instance_space_knn_scale_composition = repl.INSTANCE_SPACE_KNN_SCALE_COMPOSITION.copy()
-diagnostics = repl.DIAGNOSTICS.copy()
-unload = repl.UNLOAD.copy()
+CTX = repl.load_context(root=ANALYSIS_ROOT, artifact_dir=ARTIFACT_DIR)
+SUMMARY = CTX["summary"]
+NOTEBOOK_CTX = dict(CTX)
 
 validation_observed = pd.read_csv(
-    REPO_ROOT / "catalog" / "validation_report_observed.csv"
+    ANALYSIS_ROOT / "catalog" / "validation_report_observed.csv"
 )
-validation_nominal_style = pd.read_csv(REPO_ROOT / "catalog" / "validation_report.csv")
+validation_nominal_style = pd.read_csv(ANALYSIS_ROOT / "catalog" / "validation_report.csv")
 g2milp_contract = json.loads(
-    (REPO_ROOT / "catalog" / "g2milp_generation_contract.json").read_text(
+    (ANALYSIS_ROOT / "catalog" / "g2milp_generation_contract.json").read_text(
         encoding="utf-8"
     )
 )
 
+params = CTX["params"].copy()
+catalog = CTX["catalog"].copy()
+family_summary = CTX["family_summary"].copy()
+observed_noise_manifest = CTX["observed_noise_manifest"]
+manifest = CTX["manifest"]
+
+jobs = CTX["jobs"].copy()
+jobs_enriched = CTX["jobs_enriched"].copy()
+operations = CTX["operations"].copy()
+eligible = CTX["eligible"].copy()
+machines = CTX["machines"].copy()
+precedences = CTX["precedences"].copy()
+downtimes = CTX["downtimes"].copy()
+events = CTX["events"].copy()
+schedule = CTX["schedule"].copy()
+job_metrics = CTX["job_metrics"].copy()
+due_audit = CTX["due_audit"].copy()
+proc_audit = CTX["proc_audit"].copy()
+proc_audit_enriched = CTX["proc_audit_enriched"].copy()
+congestion = CTX["congestion"].copy()
+
+structural_report = CTX["structural_report"].copy()
+event_report = CTX["event_report"].copy()
+audit_reconciliation = CTX["audit_reconciliation"].copy()
+regime_checks = CTX["regime_checks"].copy()
+fifo_schema_report = CTX["fifo_schema_report"].copy()
+release_consistency_report = CTX["release_consistency_report"].copy()
+utilization = CTX["utilization"].copy()
+instance_space_features = CTX["instance_space_features"].copy()
+instance_space_pairs = CTX["instance_space_pairs"].copy()
+instance_space_summary = CTX["instance_space_summary"].copy()
+instance_space_knn_profile = CTX["instance_space_knn_profile"].copy()
+instance_space_knn_regime_composition = CTX["instance_space_knn_regime_composition"].copy()
+instance_space_knn_scale_composition = CTX["instance_space_knn_scale_composition"].copy()
+diagnostics = CTX["diagnostics"].copy()
+unload = CTX["unload"].copy()
+
 inventory_summary = pd.DataFrame([SUMMARY])
+pipeline_summary = pd.DataFrame(
+    [
+        {
+            "analysis_root": str(ANALYSIS_ROOT),
+            "artifact_dir": str(ARTIFACT_DIR),
+            "generate_observed_release": bool(PIPELINE_CONFIG["generate_observed_release"]),
+            "source_root": str(PIPELINE_CONFIG["source_root"] or ""),
+            "target_root": str(PIPELINE_CONFIG["target_root"]),
+            "sample_instance_id": str(PIPELINE_CONFIG["sample_instance_id"]),
+        }
+    ]
+)
+display(pipeline_summary)
 display(inventory_summary)
 display(
     Markdown(
@@ -449,7 +507,7 @@ display(
 - `repl.plot_congestion_diagnostics()`
 - `repl.plot_operational_sanity()`
 - `repl.plot_instance_space_coverage()`
-- `repl.plot_instance_drilldown("GO_XS_DISRUPTED_01")`
+- `repl.plot_instance_drilldown("GO_XS_DISRUPTED_01", ctx=NOTEBOOK_CTX)`
 """
     )
 )
@@ -1299,7 +1357,7 @@ solver_smoke_summary.to_csv(ARTIFACT_DIR / "solver_smoke_summary.csv", index=Fal
 # - produz métricas coerentes com o regime escolhido
 
 # %%
-sample_instance = "GO_XS_DISRUPTED_01"
+sample_instance = str(PIPELINE_CONFIG["sample_instance_id"])
 
 sample_params = params[params["instance_id"] == sample_instance]
 sample_summary = catalog[catalog["instance_id"] == sample_instance]

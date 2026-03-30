@@ -53,6 +53,13 @@
   "repository_org": "PequiFlux",
   "repository_name": "agro_yard_dfjsp_benchmark_go",
   "repository_url": "https://github.com/PequiFlux/agro_yard_dfjsp_benchmark_go",
+  "documentation_files": [
+    "README.md",
+    "docs/README.md",
+    "docs/g2milp_generation_contract.md",
+    "docs/observed_noise_model.md",
+    "docs/synthetic_data_validation_next_steps.md"
+  ],
   "observational_noise_model_id": "pequiflux_observed_noise_v1_1",
   "official_dataset_role": "base_dataset_for_g2milp_instance_generation",
   "downstream_generation_model_family": "G2MILP",

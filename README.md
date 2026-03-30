@@ -1,15 +1,53 @@
-# Agro Yard D-FJSP GO Benchmark v1.1.0-observed
+# Agro Yard D-FJSP GO Benchmark
 
-Esta é a release oficial do benchmark em sua forma **observada**. Ela foi derivada do release nominal `v1.0.0` com **ChatGPT 5.4 PRO**, auditada e revalidada localmente, e deve ser tratada como o **dataset seed oficial** para futuras gerações com modelos da família **G2MILP**.
+Release oficial publicada neste repositório: `v1.1.0-observed`
 
-## O que muda
+Este repositório contém um benchmark sintético de **Dynamic Flexible Job Shop Scheduling** orientado ao contexto de pátio agroindustrial em Goiás. A release atual preserva a estrutura central do benchmark original e adiciona uma camada observacional mais plausível para prazos e tempos de processamento, mantendo carregamento, auditabilidade e rastreabilidade.
 
-Os únicos campos centrais alterados foram:
+## Nota sobre originalidade
+
+Este `README.md` foi escrito especificamente para este projeto. Quando a documentação fala em release "derivada", isso descreve a **linhagem do dataset** em relação à `v1.0.0`, não a origem do texto. A documentação desta base é original do repositório; a linhagem formal vale para os dados e seus metadados.
+
+## O que esta base entrega
+
+| Item | Valor |
+| --- | --- |
+| Total de instâncias | `36` |
+| Escalas | `XS`, `S`, `M`, `L` |
+| Regimes | `balanced`, `peak`, `disrupted` |
+| Réplicas por combinação escala x regime | `3` |
+| Jobs por instância | de `18` a `96` |
+| Máquinas por instância | de `5` a `13` |
+| Operações por job | `4` obrigatórias |
+| Horizonte de planejamento | `1080` min |
+| Papel oficial da release | dataset pai congelado para geração com `G2MILP` |
+
+Cada job segue a mesma cadeia operacional:
+
+1. `WEIGH_IN`
+2. `SAMPLE_CLASSIFY`
+3. `UNLOAD`
+4. `WEIGH_OUT`
+
+Cada instância já inclui:
+
+- estrutura completa do problema
+- elegibilidade por máquina
+- precedências
+- indisponibilidades de máquina
+- eventos cronológicos
+- baseline FIFO
+- métricas agregadas por job
+- trilhas de auditoria da camada observacional
+
+## O que muda na `v1.1.0-observed`
+
+Os dois campos centrais alterados nesta release são:
 
 - `jobs.csv::completion_due_min`
 - `eligible_machines.csv::proc_time_min`
 
-Depois disso, foram recalculados:
+Após essa transformação, também foram recalculados:
 
 - `fifo_schedule.csv`
 - `fifo_job_metrics.csv`
@@ -17,170 +55,213 @@ Depois disso, foram recalculados:
 - `catalog/benchmark_catalog.csv`
 - `catalog/instance_family_summary.csv`
 
-## O que foi preservado
+O que foi preservado:
 
-- as mesmas `36` instâncias
-- exatamente `4` operações por job
-- as precedências estruturais
+- o conjunto oficial de `36` instâncias
+- a estrutura com `4` operações por job
+- as precedências lineares
 - a elegibilidade estrutural de máquina por operação
 - a compatibilidade por commodity
-- as janelas de indisponibilidade de máquina
-- os eventos de chegada e visibilidade
-- a interface de consumo do benchmark pelo stack Gurobi
+- as janelas de indisponibilidade
+- os eventos `JOB_VISIBLE`, `JOB_ARRIVAL`, `MACHINE_DOWN` e `MACHINE_UP`
+- a interface de consumo pelo loader em `gurobi/load_instance.py`
 
-Em outras palavras: o problema continua sendo o mesmo benchmark D-FJSP; o que mudou foi a camada observacional dos prazos e dos tempos de processamento.
+Leitura correta: esta base continua sendo **sintética**. O ganho metodológico aqui não é "virar dado real", e sim sair de um benchmark excessivamente limpo para um seed mais útil em testes de robustez, comparação de métodos e geração de instâncias-filhas com linhagem explícita.
 
-## Fórmulas usadas
+## Estrutura do repositório
 
-### 1. Prazo observado por job
+```text
+.
+├── catalog/                    # catálogos agregados, manifestos e relatórios de validação
+├── docs/                       # documentação metodológica da camada observacional e do contrato G2MILP
+├── gurobi/                     # loader, views para modelagem e exemplo mínimo com Gurobi
+├── instances/                  # 36 instâncias oficiais
+├── output/jupyter-notebook/    # notebook de validação e artefatos analíticos
+├── tools/                      # scripts de validação, análise e smoke tests
+├── manifest.json               # manifesto global da release
+└── README.md
+```
 
-$$
-\mathrm{slack}^{obs}_j = b(\mathrm{priority}_j) + f(\mathrm{appointment}_j,\mathrm{commodity}_j,\mathrm{moisture}_j,\mathrm{shift}_j,\mathrm{regime}) + u_{\mathrm{inst}} + u_{\mathrm{shift}(j)} + \varepsilon_j
-$$
+## Conteúdo de cada instância
 
-$$
-\mathrm{due}^{obs}_j = \mathrm{arrival}_j + \mathrm{clip}\!\left(\mathrm{slack}^{obs}_j,\, LB_j + 18,\, b(\mathrm{priority}_j) + 120\right)
-$$
+Arquivos centrais:
 
-Onde:
+- `params.json`: metadados da instância, horizonte, unidades e sementes relevantes
+- `jobs.csv`: atributos dos jobs, chegada, visibilidade, prioridade, prazo e custo de espera
+- `operations.csv`: estágios e releases exógenos por operação
+- `precedences.csv`: arcos de precedência e lags mínimos
+- `eligible_machines.csv`: elegibilidade e `proc_time_min` por tripla `(job, op, machine)`
+- `machine_downtimes.csv`: indisponibilidades de máquina
+- `events.csv`: eventos cronológicos para replay ou análise orientada a eventos
+- `fifo_schedule.csv`: baseline FIFO/earliest-completion
+- `fifo_job_metrics.csv`: métricas por job derivadas do baseline
+- `fifo_summary.json`: resumo agregado do baseline
 
-- $b(\mathrm{priority}_j)$ é a folga base por classe de prioridade
-- $f(\cdot)$ agrega efeitos fixos pequenos e interpretáveis
-- $u_{\mathrm{inst}}$ é um efeito latente da instância
-- $u_{\mathrm{shift}(j)}$ é um efeito latente do turno
-- $\varepsilon_j$ é ruído Student-t com escala dependente do regime
-- $LB_j$ é o lower bound físico plausível do job, calculado como a soma dos menores tempos elegíveis de suas quatro operações
+Arquivos de auditabilidade da camada observacional:
 
-### 2. Tempo observado por tripla `(job, op, machine)`
+- `job_noise_audit.csv`
+- `proc_noise_audit.csv`
+- `job_congestion_proxy.csv`
+- `noise_manifest.json`
 
-$$
-p^{obs}_{jom} = \max\!\left( p^{\min}_{\mathrm{stage}}, \mathrm{round}\!\left( p^{nom}_{jom} \cdot \exp\!\left( u_m + u_{\mathrm{shift}} + u_{\mathrm{stage,inst}} + u_{\mathrm{regime}} + \beta_{\mathrm{stage}} \, g_j + u_{\mathrm{commodity}} + u_{\mathrm{moisture}} + \varepsilon_{jom} \right) + \mathrm{pause}_{jom} \right) \right)
-$$
+O dicionário de esquema consolidado está em `catalog/schema_dictionary.csv`.
 
-Onde:
+## Catálogo da base
 
-- $p^{nom}_{jom}$ é o tempo nominal original
-- $u_m$ é um efeito persistente da máquina
-- $u_{\mathrm{shift}}$ é um efeito do turno
-- $u_{\mathrm{stage,inst}}$ é um efeito latente do estágio na instância
-- $u_{\mathrm{regime}}$ captura o ambiente `balanced / peak / disrupted`
-- $g_j$ é o proxy contínuo de congestionamento derivado das chegadas
-- $u_{\mathrm{commodity}}$ e $u_{\mathrm{moisture}}$ são ajustes semânticos pequenos
-- $\varepsilon_{jom}$ é ruído idiossincrático
-- $\mathrm{pause}_{jom}$ representa microparadas ocasionais
-- $p^{\min}_{\mathrm{stage}}$ impõe um piso por estágio
+O arquivo `catalog/benchmark_catalog.csv` resume cada instância com escala, regime, semente, tamanho, baseline FIFO e trilha de solver sugerida.
 
-## Como validamos
+Resumo prático por escala:
 
-### 1. Integridade estrutural
+| Escala | Jobs típicos | Máquinas | Trilha sugerida |
+| --- | ---: | ---: | --- |
+| `XS` | `18-24` | `5` | `exact` |
+| `S` | `30-40` | `7` | `exact` |
+| `M` | `48-64` | `9` | `hybrid` |
+| `L` | `72-96` | `13` | `metaheuristic` |
 
-Rodamos:
+O resumo por família escala x regime está em `catalog/instance_family_summary.csv`.
+
+## Requisitos
+
+Dependências mínimas por tipo de uso:
+
+| Uso | Dependências |
+| --- | --- |
+| Ler instâncias com o loader | Python padrão |
+| Validar a release | `pandas`, `numpy` |
+| Rodar smoke test exato | `pandas`, `numpy`, `scipy` |
+| Rodar exemplo com Gurobi | `gurobipy` |
+| Reabrir notebook | `jupyter` |
+
+Exemplo de instalação para exploração e validação:
+
+```bash
+python -m pip install pandas numpy scipy jupyter
+```
+
+Se você quiser testar o exemplo em Gurobi:
+
+```bash
+python -m pip install gurobipy
+```
+
+## Uso rápido
+
+### 1. Validar a release observada
 
 ```bash
 python tools/validate_observed_release.py .
+python tools/validate_benchmark.py
 ```
 
-Resultado da release oficial:
+O primeiro script verifica consistência estrutural e emite diagnósticos globais. O segundo garante que todas as instâncias continuam carregáveis pelo stack de leitura do benchmark.
 
-- `36/36` instâncias com `PASS`
-- todo job tem `4` operações
-- todo job tem `3` precedências estruturais
-- toda operação tem ao menos uma máquina elegível
-- todo prazo respeita `completion_due_min - arrival_time_min >= nominal_lb + 18`
-- cada job tem exatamente `1` evento `JOB_VISIBLE`
-- cada job tem exatamente `1` evento `JOB_ARRIVAL`
-- não há overlap de máquina no baseline FIFO
-- `end_min - start_min` bate com `eligible_machines.csv::proc_time_min`
-- `fifo_job_metrics.csv` bate com `fifo_schedule.csv`
-
-### 2. Validação do loader Gurobi
-
-Rodamos:
+### 2. Carregar uma instância
 
 ```bash
-python tools/validate_benchmark.py
 python gurobi/load_instance.py instances/GO_XS_BALANCED_01
 ```
 
-Isso garante que:
+Ou, em Python:
 
-- a instância continua carregável pelo loader
-- toda `machine_id` referenciada existe em `machines.csv`
-- todo `proc_time_min` é positivo
-- todo par `(job_id, op_seq)` continua com elegibilidade válida
+```python
+from pathlib import Path
 
-### 3. Reconciliação dos audits
+from gurobi.load_instance import build_gurobi_views, load_instance
 
-A release só é aceitável se:
+raw = load_instance(Path("instances/GO_XS_BALANCED_01"))
+data = build_gurobi_views(raw)
 
-- `job_noise_audit.csv::completion_due_observed_min == jobs.csv::completion_due_min`
-- `proc_noise_audit.csv::proc_time_observed_min == eligible_machines.csv::proc_time_min`
+print(data["params"]["instance_id"])
+print(len(data["J"]), "jobs")
+print(len(data["M"]), "machines")
+print(len(data["ELIGIBLE_KEYS"]), "tripletas elegíveis")
+```
 
-### 4. Diagnósticos de realismo
+### 3. Montar um modelo mínimo com Gurobi
 
-Os diagnósticos agregados da release foram:
+```bash
+python gurobi/example_usage.py
+```
 
-- `R²(due slack ~ priority): 1.0000 -> 0.4848`
-- `R²(proc UNLOAD ~ load + machine + moisture): 0.7540 -> 0.4995`
+Esse comando requer `gurobipy` instalado. O exemplo constrói variáveis de atribuição, início e conclusão sobre a instância `GO_XS_BALANCED_01`, mas deixa a formulação de não sobreposição aberta para o usuário.
 
-Além disso, a ordem operacional esperada foi preservada:
+### 4. Rodar o smoke test orientado a solver
 
-- `balanced < peak < disrupted` em `avg_fifo_mean_flow_min`
-- `balanced < peak < disrupted` em `avg_fifo_p95_flow_min`
+```bash
+python tools/exact_solver_smoke.py
+```
 
-## Resultados do notebook
+Esse script usa `scipy.optimize.milp` como backend leve para mostrar que:
 
-O notebook `output/jupyter-notebook/instance-validation-and-exploratory-analysis.ipynb` gerou uma camada adicional de testes, estatísticas e figuras sobre as `36` instâncias oficiais.
+- casos pequenos fecham no orçamento definido
+- casos maiores continuam informativos e com gap não trivial sob o mesmo budget
 
-Resumo dos resultados agregados:
+## Validação e diagnósticos desta release
+
+Os checks estruturais principais reportados para a release oficial são:
+
+- `36/36` instâncias com `PASS` em `tools/validate_observed_release.py`
+- todos os jobs continuam com `4` operações e `3` precedências
+- toda operação continua com pelo menos uma máquina elegível
+- todo prazo observado continua respeitando `job_noise_audit.csv::nominal_processing_lb_min + 18`
+- o baseline FIFO permanece sem overlap por máquina
+- `fifo_job_metrics.csv` continua reconciliado com `fifo_schedule.csv`
+- `job_noise_audit.csv` e `proc_noise_audit.csv` continuam batendo exatamente com os arquivos centrais observados
+
+Os diagnósticos globais divulgados pelo validador são:
+
+- `R²(due slack ~ priority) = 0.4848`
+- `R²(proc UNLOAD ~ load + machine + moisture) = 0.4995`
+
+No notebook de validação adicional, os principais resultados consolidados foram:
 
 - `structural_pass_rate = 1.0000`
 - `release_consistency_checks_pass = True`
+- `relational_consistency_checks_pass = True`
 - `fifo_schema_checks_pass = True`
 - `due_audit_match_share = 1.0000`
 - `proc_audit_match_share = 1.0000`
-- `flow_regime_order_checks_pass = True`
-- `queue_regime_order_checks_pass = True`
-- `congestion_mean_regime_order_checks_pass = False`
+- `flow_regime_checks_pass = True`
+- `mean_queue_regime_checks_pass = True`
+- `mean_congestion_regime_checks_pass = False`
 - `instance_space_exact_duplicate_checks_pass = True`
 - `instance_space_duplicate_like_checks_pass = True`
-- menor distância ao vizinho mais próximo no espaço padronizado de features: `2.3228`
+- `instance_space_nearest_neighbor_distance_min = 2.3228`
 - `solver_smoke_small_cases_optimal = True`
 - `solver_smoke_all_cases_have_solution = True`
-- `solver_smoke_large_cases_nontrivial_gap = True`
+- `solver_smoke_large_cases_show_non_trivial_gap = True`
 - `solver_smoke_gap_ladder_pass = True`
-- soma total de mismatches em eventos: `0` para `JOB_VISIBLE`, `JOB_ARRIVAL`, `MACHINE_DOWN` e `MACHINE_UP`
-- margem observada sobre o lower bound físico no resumo por escala/regime: de `124` a `353` minutos
 
-Leitura correta desses checks:
+Importante: os flags `False` acima aparecem em diagnósticos auxiliares de monotonicidade e cauda. Eles não invalidam a release, mas sinalizam exatamente onde o benchmark ainda pode ser refinado metodologicamente.
 
-- `fifo_schema_checks_pass = True` significa que o baseline FIFO respeita elegibilidade, `release_time`, precedência, ausência de overlap e ausência de execução atravessando downtime nas `36` instâncias
-- `release_consistency_checks_pass = True` significa que `manifest.json`, `params.json` e `observed_noise_manifest.json` estão consistentes entre si para `dataset_version`, `parent_dataset_version`, `noise_model_id` e URLs canônicas do release
-- no release oficial atual, isso implica que o ruído de governança mais comum nessa etapa, a divergência entre a versão raiz do dataset e a versão declarada nas instâncias, não está presente
-- `flow_regime_order_checks_pass = True` cobre apenas a monotonicidade de `avg_fifo_mean_flow_min` e `avg_fifo_p95_flow_min`
-- `queue_regime_order_checks_pass = True` indica que a fila média também preserva `balanced < peak < disrupted`
-- `congestion_mean_regime_order_checks_pass = False` indica que a média do proxy `arrival_congestion_score` não é monotônica em todas as famílias; isso não invalida o benchmark, porque esse proxy é auxiliar e não a métrica-alvo do problema
-- `instance_space_exact_duplicate_checks_pass = True` significa que o notebook não encontrou duplicatas exatas nem por digest dos arquivos centrais da instância nem por vetor de features padronizado
-- `instance_space_duplicate_like_checks_pass = True` significa que nenhuma instância caiu abaixo do limiar heurístico de screening no espaço multivariado usado para PCA e vizinho mais próximo
-- `solver_smoke_small_cases_optimal = True` significa que, em um smoke test exato budgetado com `scipy.optimize.milp`, os menores casos induzidos por chegada (`XS-8` e `S-12`) fecharam no orçamento de `5 s`
-- `solver_smoke_large_cases_nontrivial_gap = True` significa que os casos maiores do mesmo smoke test (`M-18` e `L-24`) continuam produzindo incumbentes, mas já preservam gap não trivial sob o mesmo orçamento
+O resumo completo do notebook está em `output/jupyter-notebook/instance_validation_analysis_artifacts/notebook_summary.md`.
 
-Artefatos tabulares principais:
+## Artefatos principais
 
+Documentação:
+
+- `manifest.json`
+- `docs/README.md`
+- `docs/observed_noise_model.md`
+- `docs/g2milp_generation_contract.md`
+- `docs/synthetic_data_validation_next_steps.md`
+- `catalog/observed_noise_manifest.json`
+- `catalog/noise_diagnostics_before_after.json`
+- `catalog/validation_report_observed.csv`
+
+Análise adicional:
+
+- `output/jupyter-notebook/instance-validation-and-exploratory-analysis.ipynb`
 - `output/jupyter-notebook/instance_validation_analysis_artifacts/notebook_summary.csv`
 - `output/jupyter-notebook/instance_validation_analysis_artifacts/structural_report.csv`
 - `output/jupyter-notebook/instance_validation_analysis_artifacts/fifo_schema_report.csv`
 - `output/jupyter-notebook/instance_validation_analysis_artifacts/release_consistency_report.csv`
-- `output/jupyter-notebook/instance_validation_analysis_artifacts/instance_space_features.csv`
-- `output/jupyter-notebook/instance_validation_analysis_artifacts/instance_space_pairs.csv`
+- `output/jupyter-notebook/instance_validation_analysis_artifacts/relational_consistency_report.csv`
 - `output/jupyter-notebook/instance_validation_analysis_artifacts/instance_space_summary.csv`
-- `output/jupyter-notebook/instance_validation_analysis_artifacts/solver_smoke_results.csv`
 - `output/jupyter-notebook/instance_validation_analysis_artifacts/solver_smoke_summary.csv`
-- `output/jupyter-notebook/instance_validation_analysis_artifacts/audit_reconciliation.csv`
-- `output/jupyter-notebook/instance_validation_analysis_artifacts/event_report.csv`
-- `output/jupyter-notebook/instance_validation_analysis_artifacts/due_margin_summary.csv`
 
-Imagens principais:
+Figuras de referência:
 
 ![Structural validation and auditability](output/jupyter-notebook/instance_validation_analysis_artifacts/structural_validation_and_auditability.png)
 
@@ -190,55 +271,44 @@ Imagens principais:
 
 ![PCA and kNN instance-space coverage](output/jupyter-notebook/instance_validation_analysis_artifacts/instance_space_coverage.png)
 
-A figura acima concentra a leitura de `PCA + kNN` do release:
+## Documentação metodológica
 
-- o painel de `PCA` mostra cobertura global do espaço de instâncias
-- o perfil `kNN` mostra redundância local e separação entre vizinhos
-- os painéis inferiores ajudam a ver pureza por regime e os pares mais próximos do release
+A documentação canônica versionada da release é a declarada em `manifest.json::documentation_files` e resumida em `docs/README.md`.
 
-![Relational consistency overview](output/jupyter-notebook/instance_validation_analysis_artifacts/relational_consistency_overview.png)
+Para detalhes sobre a transformação observacional, consulte:
 
-![Formal shift experiments](output/jupyter-notebook/instance_validation_analysis_artifacts/formal_shift_experiments.png)
-
-![Tail and rare segments](output/jupyter-notebook/instance_validation_analysis_artifacts/tail_and_rare_segments.png)
-
-![Solver-oriented smoke test](output/jupyter-notebook/instance_validation_analysis_artifacts/solver_oriented_smoke_test.png)
-
-![FIFO schedule drilldown for GO_XS_DISRUPTED_01](output/jupyter-notebook/instance_validation_analysis_artifacts/go_xs_disrupted_01_fifo_schedule.png)
-
-O drilldown FIFO acima foi regenerado na versão atual do notebook com menos rótulos, destaque explícito de downtime e separação visual mais limpa entre as faixas de máquina. O arquivo `.ipynb` salvo no repositório já contém essa saída embutida.
-
-Figuras complementares:
-
-- `output/jupyter-notebook/instance_validation_analysis_artifacts/inventory_overview.png`
-- `output/jupyter-notebook/instance_validation_analysis_artifacts/congestion_diagnostics.png`
-- `output/jupyter-notebook/instance_validation_analysis_artifacts/go_xs_disrupted_01_job_level_views.png`
-
-## Arquivos principais
-
-- `manifest.json`
 - `docs/observed_noise_model.md`
-- `catalog/observed_noise_manifest.json`
-- `catalog/noise_diagnostics_before_after.json`
-- `catalog/validation_report_observed.csv`
+- `tools/create_observed_noise_layer.py`
+
+Para uso desta release como dataset pai congelado em geração futura, consulte:
+
 - `docs/g2milp_generation_contract.md`
-- `output/jupyter-notebook/instance-validation-and-exploratory-analysis.ipynb`
-- `output/jupyter-notebook/instance_validation_analysis_artifacts/`
+- `manifest.json`
 
-## Leitura correta desta base
+Para backlog metodológico de validação e fortalecimento do benchmark, consulte:
 
-Esta base continua sendo sintética. O ganho aqui não é “virar dado real”, e sim sair de um benchmark excessivamente limpo para um dataset seed mais útil para testes de robustez, comparação de métodos e geração futura de instâncias com G2MILP, sem perder rastreabilidade.
+- `docs/synthetic_data_validation_next_steps.md`
 
-## Próximos passos
+## Uso metodológico correto
 
-Os próximos passos metodologicamente mais fortes para validar e melhorar esta base são:
+Esta release deve ser usada como:
 
-- adicionar validação `holdout-based` contra algum subconjunto real, se ele existir
-- separar `fidelity`, `diversity` e `authenticity`
-- medir utilidade downstream com `TSTR/TRTS`
-- expandir `PCA + kNN` para `instance space analysis` orientada a solver
-- gerar instâncias mais `graded` e mais `discriminating`
-- fortalecer o benchmark com `performance profiles` e curvas `fixed-budget/fixed-target`
-- reforçar a validação de caudas e segmentos raros
+- benchmark sintético com camada observacional mais realista
+- base pai congelada para geração de instâncias-filhas com `G2MILP`
+- referência auditável para comparação de modelos, heurísticas e pipelines de geração
 
-O detalhamento desses próximos passos, com racional metodológico, backlog implementável e referências da literatura, está em [docs/synthetic_data_validation_next_steps.md](docs/synthetic_data_validation_next_steps.md).
+Esta release não deve ser usada como:
+
+- substituto de dado operacional bruto
+- evidência de autenticidade empírica sem validação externa
+- release a ser sobrescrita sem nova versionagem formal
+
+## Próximos passos naturais
+
+Alguns caminhos metodologicamente fortes para evoluir a base:
+
+- validação com holdout real, se houver acesso a subconjunto confiável
+- separação explícita entre `fidelity`, `diversity` e `authenticity`
+- avaliação downstream com protocolos como `TSTR/TRTS`
+- instance space analysis mais diretamente orientada a solver
+- geração de famílias-filhas mais graduais e mais discriminantes
