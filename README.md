@@ -263,6 +263,8 @@ Análise adicional:
 
 Figuras de referência:
 
+![Gantt replay for GO_XS_DISRUPTED_01](output/jupyter-notebook/instance_validation_analysis_artifacts/fig_gantt_replay_go_xs_disrupted_01.gif)
+
 ![Structural validation and auditability](output/jupyter-notebook/instance_validation_analysis_artifacts/structural_validation_and_auditability.png)
 
 ![Observational layer behavior](output/jupyter-notebook/instance_validation_analysis_artifacts/observational_layer_behavior.png)
